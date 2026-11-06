@@ -3,6 +3,7 @@ import { fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balan
 import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseRename, phon } from './parse.js';
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
+import * as FX from './fx.js';
 import { dueRepeats, nextDate } from './repeat.js';
 import { FLAGS, loadFlagDefaults, flagDefault } from './flags.js';
 import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows } from './share.js';
@@ -186,7 +187,7 @@ function listen(onText, gid, opts = {}) {
   const check = (t) => { try { const full = opts.prefix && !RESET_RE.test(t) ? opts.prefix + ', ' + t : t.replace(RESET_RE, ''); return parseExpense(full, { people: peopleArr(), members, me: st().me }); } catch { return null; } };
   const ov = document.createElement('div');
   ov.className = 'listen';
-  ov.innerHTML = `<div class="orb">${icon('mic', 'lg')}</div><div class="said" aria-live="polite">Listening…</div><div class="preview" id="lvp" style="justify-content:center;max-width:420px"></div><div id="lvh" style="max-width:420px;width:100%"><p class="muted small" style="text-align:center">Say what, how much, who paid and who shares. Pills turn green as you say them.</p></div><div class="btns" style="margin-top:20px;width:100%;max-width:320px"><button class="btn" data-c>Cancel</button><button class="btn primary" data-d>Done</button></div>`;
+  ov.innerHTML = `<div class="orb-wrap"><span class="ring"></span><span class="ring"></span><span class="ring"></span><div class="orb">${icon('mic', 'lg')}</div></div><div class="wave" aria-hidden="true">${'<i></i>'.repeat(9)}</div><div class="said" aria-live="polite">Listening…</div><div class="preview" id="lvp" style="justify-content:center;max-width:420px"></div><div id="lvh" style="max-width:420px;width:100%"><p class="muted small" style="text-align:center">Say what, how much, who paid and who shares. Pills turn green as you say them.</p></div><div class="btns" style="margin-top:20px;width:100%;max-width:320px"><button class="btn" data-c>Cancel</button><button class="btn primary" data-d>Done</button></div>`;
   document.body.appendChild(ov);
   let finals = '', interim = '', cancelled = false, finished = false, stopping = false, timer = null, r = null;
   const started = Date.now();
@@ -221,6 +222,7 @@ function listen(onText, gid, opts = {}) {
     timer = setTimeout(() => { stopping = true; try { r?.stop(); } catch {} setTimeout(end, 350); }, wait);
     if (c) {
       ov.querySelector('#lvp').innerHTML = c.html;
+      popPills(ov, 'mic');
       hint.innerHTML = askHTML(c) + `<p class="faint small" style="text-align:center;margin:10px 0 0">Wrong? Say “remove Priya”, “add Amit”, “actually 1500”, “paid by Deepak instead” or “scratch that”.</p>`;
     } else {
       ov.querySelector('#lvp').innerHTML = checklist({ slots: { what: 'assumed', amount: 'missing', paid: 'assumed', who: 'assumed', split: 'assumed' }, paid: { [st().me]: 0 }, owedIds: members, split: { mode: 'equal', parts: {} }, desc: '', nameOf: S.pname }).html;
@@ -297,6 +299,9 @@ async function render() {
   }
   if (!v) return go('/');
   const top = $('#top'), view = $('#view'), nav = $('#nav');
+  const changed = path !== current;
+  const depth = (p) => p.split('/').filter(Boolean).length;
+  const swap = () => {
   document.title = v.title && v.title !== 'Hisaab' ? `${v.title} · Hisaab` : 'Hisaab: split bills by just saying it';
   top.hidden = !!v.bare;
   nav.hidden = !!v.bare || v.nav === false;
@@ -310,11 +315,19 @@ async function render() {
     ['home', '/', 'home', 'Home'], ['groups', '/groups', 'users', 'Groups'], ['add', '/add', 'plus', 'Add'], ['people', '/people', 'user', 'People'], ['stats', '/stats', 'chart', 'Insights'],
   ].filter(([k]) => k !== 'stats' || flag('insights')).map(([k, h, ic, l]) => k === 'add'
     ? `<a href="#/add${st().lastGroup ? '?g=' + st().lastGroup : ''}" aria-label="Add expense"><span class="fab">${icon(ic)}</span></a>`
-    : `<a href="#${h}" ${tab === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l}</span></a>`).join('');
+    : `<a href="#${h}" ${tab === k ? 'aria-current="page"' : ''}>${tab === k ? '<i class="ind"></i>' : ''}${icon(ic)}<span>${l}</span></a>`).join('');
   view.innerHTML = v.html;
-  if (path !== current) { view.classList.remove('view-enter'); void view.offsetWidth; view.classList.add('view-enter'); scrollTo(0, 0); }
+  if (changed) {
+    if (!document.startViewTransition) { view.classList.remove('view-enter'); void view.offsetWidth; view.classList.add('view-enter'); }
+    scrollTo(0, 0);
+  }
   current = path;
   v.mount?.(view);
+  if (changed) FX.stagger(view);
+  FX.countUp(view, money);
+  };
+  if (changed && current) await FX.transition(swap, depth(path) < depth(current) || path === '/' ? 'back' : 'fwd');
+  else swap();
 }
 addEventListener('hashchange', render);
 
@@ -446,9 +459,9 @@ function viewHome() {
     html: `
     <section class="hero">
       <div class="muted small" style="font-weight:600">${greet}, ${esc(name)}</div>
-      <div class="big ${net > 0 ? 'pos' : net < 0 ? 'neg' : ''}" style="margin-top:6px">${net === 0 ? 'All square' : money(Math.abs(net))}</div>
+      <div class="big ${net > 0 ? 'pos' : net < 0 ? 'neg' : ''}" style="margin-top:6px">${net === 0 ? 'All square' : `<span data-count="${Math.abs(net)}">${money(Math.abs(net))}</span>`}</div>
       <div class="muted small">${net > 0 ? 'overall, you are owed' : net < 0 ? 'overall, you owe' : 'nobody owes anybody'}</div>
-      <div class="row2"><div class="pill"><span>You get</span><b class="pos">${money(get)}</b></div><div class="pill"><span>You pay</span><b class="neg">${money(pay)}</b></div></div>
+      <div class="row2"><div class="pill"><span>You get</span><b class="pos" data-count="${get}">${money(get)}</b></div><div class="pill"><span>You pay</span><b class="neg" data-count="${pay}">${money(pay)}</b></div></div>
     </section>
     ${needsBackup() ? `<div class="note warn" style="margin-top:14px;align-items:center">${icon('download', 'sm')}<span style="flex:1">Your data lives only on this phone. Save a backup now and then.</span><button class="btn sm" data-act="export">Back up</button></div>` : ''}
     ${quickBar('')}
@@ -546,7 +559,7 @@ function viewGroup(gid, tab = 'expenses') {
     tab: 'groups', title: g.name, back: '/groups',
     actions: `<button class="icon-btn" data-act="shareGroup" data-g="${gid}" aria-label="Share">${icon('share')}</button><button class="icon-btn" data-act="groupMenu" data-g="${gid}" aria-label="Group options">${icon('more')}</button>`,
     html: `${g.sample ? `<div class="note" style="margin:4px 0 12px;align-items:center">${icon('sparkle', 'sm')}<span style="flex:1">Sample trip to look around. Delete it when you are ready.</span><button class="btn sm" data-act="delSample" data-g="${gid}">Delete</button></div>` : ''}<section class="hero" style="padding:16px 18px">
-        <div style="display:flex;align-items:center;gap:12px"><span class="av lg" style="--h:${g.hue}">${esc(initials(g.name))}</span><div style="flex:1;min-width:0"><div class="small muted" style="font-weight:600">${myNet > 0 ? 'You get back' : myNet < 0 ? 'You owe' : 'You are'}</div><div style="font:800 28px var(--display);letter-spacing:-.02em" class="${myNet > 0 ? 'pos' : myNet < 0 ? 'neg' : ''} num">${myNet ? money(Math.abs(myNet)) : 'settled up'}</div></div><div style="text-align:right"><div class="small muted" style="font-weight:600">Total spend</div><div style="font:700 17px var(--display)" class="num">${money(total)}</div></div></div>
+        <div style="display:flex;align-items:center;gap:12px"><span class="av lg" style="--h:${g.hue}">${esc(initials(g.name))}</span><div style="flex:1;min-width:0"><div class="small muted" style="font-weight:600">${myNet > 0 ? 'You get back' : myNet < 0 ? 'You owe' : 'You are'}</div><div style="font:800 28px var(--display);letter-spacing:-.02em" class="${myNet > 0 ? 'pos' : myNet < 0 ? 'neg' : ''} num">${myNet ? `<span data-count="${Math.abs(myNet)}">${money(Math.abs(myNet))}</span>` : 'settled up'}</div></div><div style="text-align:right"><div class="small muted" style="font-weight:600">Total spend</div><div style="font:700 17px var(--display)" class="num">${money(total)}</div></div></div>
         ${g.live?.key ? `<div style="margin-top:12px;display:flex;gap:8px;align-items:center"><span class="tag a" id="livechip">${g.live.error ? esc(g.live.error) : 'Live'}</span><span class="faint small">Everyone with the link sees changes</span></div>` : ''}
       </section>
       <nav class="seg" style="margin-top:14px" aria-label="Group sections">${tabs.map(([k, l]) => `<a href="#/g/${gid}${k === 'expenses' ? '' : '/' + k}" ${tab === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
@@ -762,7 +775,7 @@ function checklist(m) {
     : sp.mode === 'percent' || sp.mode === 'shares' ? owedIds.map((id) => +(+sp.parts[id] || 0).toFixed(2)).join(':')
     : 'by amount';
   const JUMP = { For: 'desc', Amount: 'amt', 'Paid by': 'paidhead', 'Shared by': 'splithead', Split: 'splithead', When: 'dt' };
-  const pill = (state, label, value) => `<span class="pl ${state}" ${m.jump && JUMP[label] ? `role="button" tabindex="0" data-jump="${JUMP[label]}"` : ''}><span>${label}</span>${value ? ` <b>${value}</b>` : ''}</span>`;
+  const pill = (state, label, value) => `<span class="pl ${state}" data-k="${label}" ${m.jump && JUMP[label] ? `role="button" tabindex="0" data-jump="${JUMP[label]}"` : ''}><span>${label}</span>${value ? ` <b>${value}</b>` : ''}</span>`;
   const out = [];
   out.push(pill(S_.what === 'ok' ? 'ok' : 'as', 'For', esc(m.desc || 'Expense') + (S_.what === 'ok' ? '' : '?')));
   out.push(S_.amount === 'ok' ? pill('ok', 'Amount', money(m.amount)) : pill('bad', 'Amount', 'missing'));
@@ -790,6 +803,17 @@ const askHTML = (c) => c.ask
   ? `<div class="ask ${c.ready ? '' : 'need'}">${icon('sparkle', 'sm')}<span>${esc(c.ask)}</span></div>`
   : `<div class="ask done">${icon('check', 'sm')}<span>All set. Tap Add, or keep talking to change anything.</span></div>`;
 
+const pillMemo = {};
+// A pill that just turned green gets a little pop so you notice what was understood.
+function popPills(root, scope) {
+  const memo = (pillMemo[scope] ||= {});
+  for (const el of root.querySelectorAll('.pl[data-k]')) {
+    const k = el.dataset.k, s = el.classList.contains('ok') ? 'ok' : el.classList.contains('bad') ? 'bad' : 'as';
+    if (memo[k]) el.classList.add('stay'); // already on screen: no entrance replay on every keystroke
+    if (memo[k] && memo[k] !== s) el.classList.add(s === 'ok' ? 'pop' : 'shake');
+    memo[k] = s;
+  }
+}
 function draftSlots() {
   const p = draft.parsed?.slots || { what: 'assumed', amount: 'missing', paid: 'assumed', who: 'assumed', split: 'assumed', when: null };
   const total = draftAmount();
@@ -967,6 +991,8 @@ function viewAdd(editId) {
       const ta = $('#smart', v);
       if (ta) {
         let t;
+        const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 220) + 'px'; };
+        ta.addEventListener('input', grow); ta.addEventListener('focus', () => requestAnimationFrame(grow)); requestAnimationFrame(grow);
         ta.oninput = () => {
           draft.text = ta.value;
           draft.pending = true;
@@ -1052,6 +1078,7 @@ function renderPreview() {
     const d = draft.preview;
     const nameOf = (id) => (id.startsWith('new:') ? d.newNames.find((n) => n.id === id)?.name || id.slice(4) : S.pname(id));
     const c = checklist({ slots: d.slots, amount: d.amount, desc: d.desc, paid: d.paid, owedIds: d.amount != null ? Object.keys(computeOwed(d.amount, d.split)) : Object.keys(d.split.parts), split: d.split, date: d.date, newNames: d.newNames, repeat: d.repeat, nameOf });
+    queueMicrotask(() => popPills(pv, 'draft'));
     pv.innerHTML = c.html + heardChips(d.heard) + `<div class="ask"><span class="countdown"></span><span style="flex:1">Updating the form when you pause…</span><button class="btn sm" data-act="applyNow">Apply now</button></div>`;
     bindFixNames(pv);
     return;
@@ -1060,6 +1087,7 @@ function renderPreview() {
   const c = checklist({ jump: true, repeat: draft.repeat, slots: draftSlots(), amount: draftAmount(), desc: draft.desc, paid: draftPaid(), owedIds: Object.keys(draftOwed()), split: draft.split, date: draft.date, newNames: draft.parsed?.newNames || [], nameOf: dname });
   pv.innerHTML = c.html + heardChips(draft.parsed?.heard) + askHTML(c) + (draft.text.trim() ? `<p class="faint small" style="margin:8px 2px 0">Tap a pill or a name to fix it, or keep talking: “remove Priya”, “actually 1500”, “rename Hemi to Himi”.</p>` : '');
   bindFixNames(pv);
+  popPills(pv, 'draft');
   $$('[data-jump]', pv).forEach((el) => (el.onclick = el.onkeydown = (e) => {
     if (e.type === 'keydown' && e.key !== 'Enter') return;
     const t = document.getElementById(el.dataset.jump);
@@ -1288,6 +1316,7 @@ async function saveDraft(btn) {
     S.flush();
     buzz();
     const wasEdit = !!draft.id;
+    if (!wasEdit) { const r = btn.getBoundingClientRect(); FX.burst(r.left + r.width / 2, r.top); }
     const gid = draft.gid;
     draft = null;
     go(wasEdit ? '/e/' + id : '/g/' + gid);
@@ -1439,7 +1468,7 @@ function viewSettings() {
       <p class="faint small" style="text-align:center;margin-top:24px">Hisaab · free, open source, no tracking · <a class="link" href="https://github.com/nmtjn1997/hisaab" target="_blank" rel="noopener">GitHub</a></p>`,
     mount(v) {
       $$('[data-flag]', v).forEach((b) => (b.onclick = () => { s.flags = { ...(s.flags || {}), [b.dataset.flag]: !flag(b.dataset.flag) }; S.save(); buzz(); render(); }));
-      $$('[data-theme-set]', v).forEach((b) => (b.onclick = () => { s.theme = b.dataset.themeSet; S.save(); applyTheme(); render(); }));
+      $$('[data-theme-set]', v).forEach((b) => (b.onclick = (e) => { const r = b.getBoundingClientRect(); document.documentElement.style.setProperty('--tx', `${e.clientX || r.left + r.width / 2}px`); document.documentElement.style.setProperty('--ty', `${e.clientY || r.top}px`); s.theme = b.dataset.themeSet; S.save(); FX.transition(() => { applyTheme(); render(); }, 'theme'); }));
       $('#cur', v).onchange = (e) => { s.cur = e.target.value; S.save(); };
       $('#restore', v).onchange = async (e) => {
         const f = e.target.files[0]; if (!f) return;
@@ -1564,6 +1593,7 @@ const ACT = {
         const a = toPaise(parseFloat($('#sa', el).value) || 0);
         if (a <= 0) return toast('Enter an amount');
         const id = recordSettle(g, from, to, a);
+        const r = $('#ok', el).getBoundingClientRect(); FX.burst(r.left + r.width / 2, r.top, 26);
         close(); buzz(); render();
         toast('Payment recorded', { action: 'Undo', onAction: () => { S.softDelete(id); render(); } });
       };
@@ -1704,6 +1734,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- boot ----------
 applyTheme();
+FX.initRipple();
 loadFlagDefaults().then(() => { render(); if (st().me) runRepeats(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && st().me) runRepeats(); });
 // Ask the browser not to evict local data under storage pressure (local-first means this is the only copy).
