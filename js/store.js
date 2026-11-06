@@ -9,7 +9,7 @@ export const uid = () => {
   return Date.now().toString(36).slice(-4) + [...a].map((b) => (b % 36).toString(36)).join('');
 };
 
-const empty = () => ({ v: 1, me: null, people: {}, groups: {}, expenses: {}, settings: { theme: 'system', cur: '₹' }, lastGroup: null });
+const empty = () => ({ v: 1, me: null, people: {}, groups: {}, expenses: {}, comments: {}, settings: { theme: 'system', cur: '₹' }, lastGroup: null });
 
 function load() {
   try {
@@ -73,12 +73,22 @@ export function upsertExpense(e) {
   const now = Date.now();
   const id = e.id || uid();
   const prev = state.expenses[id];
-  state.expenses[id] = { ...prev, ...e, id, createdAt: prev?.createdAt || now, updatedAt: now };
+  state.expenses[id] = { ...prev, ...e, id, by: prev?.by || e.by || state.me, editedBy: state.me, createdAt: prev?.createdAt || now, updatedAt: now };
   if (e.gid) state.lastGroup = e.gid;
   save();
   return id;
 }
-export function softDelete(id, flag = true) { if (state.expenses[id]) { state.expenses[id].deleted = flag; state.expenses[id].updatedAt = Date.now(); save(); } }
+export function softDelete(id, flag = true) { if (state.expenses[id]) { state.expenses[id].deleted = flag; state.expenses[id].editedBy = state.me; state.expenses[id].updatedAt = Date.now(); save(); } }
+
+// ---------- comments ----------
+export function addComment(gid, eid, text) {
+  const id = uid(), now = Date.now();
+  (state.comments ||= {})[id] = { id, gid, eid, by: state.me, text: String(text).trim().slice(0, 300), createdAt: now, updatedAt: now };
+  save();
+  return id;
+}
+export const commentsFor = (eid) => Object.values(state.comments || {}).filter((c) => c.eid === eid && !c.deleted).sort((a, b) => a.createdAt - b.createdAt);
+export function deleteComment(id) { const c = state.comments?.[id]; if (c) { c.deleted = true; c.updatedAt = Date.now(); save(); } }
 
 export const groupBalances = (gid) => balances(groupExpenses(gid));
 export function myTotals() {

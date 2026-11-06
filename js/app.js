@@ -490,7 +490,9 @@ function viewGroup(gid, tab = 'expenses') {
     const qtxt = (Q.get('s') || '').toLowerCase();
     const list = qtxt ? exps.filter((e) => e.desc.toLowerCase().includes(qtxt) || CAT_NAMES[e.category]?.toLowerCase().includes(qtxt)) : exps;
     let lastM = '';
-    body = `${quickBar(gid)}
+    const news = whatsNew(gid);
+    body = `${news.length ? `<div class="card" style="margin-top:14px;padding:12px 14px"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><b class="small" style="font-weight:700">${icon('bell', 'sm')} What's new</b><button class="btn sm ghost" data-act="seenGroup" data-g="${gid}">Mark seen</button></div>${news.map((n) => `<a class="row" style="min-height:48px;padding:8px 0" href="${n.href}">${av(n.who, 'sm')}<div class="main"><div class="s" style="white-space:normal"><b style="color:var(--text)">${esc(S.firstName(n.who))}</b> ${esc(n.text)}</div></div><span class="faint small">${ago(n.at)}</span></a>`).join('')}</div>` : ''}
+      ${quickBar(gid)}
       ${exps.length > 6 ? `<div class="quick" style="margin-top:10px">${icon('search', 'sm')}<input id="gs" placeholder="Search expenses" value="${esc(Q.get('s') || '')}" aria-label="Search expenses"></div>` : ''}
       ${list.length ? list.map((e) => { const d = new Date(e.date); const m = `${MON[d.getMonth()]} ${d.getFullYear()}`; const head = m !== lastM ? `${lastM ? '</div>' : ''}<div class="month">${m}</div><div class="list">` : ''; lastM = m; return head + expenseRow(e); }).join('') + '</div>'
         : `<div class="empty"><div class="art">${icon('receipt', 'lg')}</div><h3>${qtxt ? 'No matches' : 'No expenses yet'}</h3><p>${qtxt ? 'Try another word.' : 'Type or say the first one above, or scan a bill.'}</p></div>`}`;
@@ -699,6 +701,7 @@ function viewExpense(id) {
       <div class="list">${Object.entries(e.owed).map(([pid, a]) => `<a class="row" href="#/p/${pid}">${av(pid, 'sm')}<div class="main"><div class="t">${esc(S.pname(pid))}</div>${!settle && e.paid[pid] ? `<div class="s">paid ${money(e.paid[pid])}, share ${money(a)}</div>` : ''}</div><div class="end"><div class="v">${money(a)}</div></div></a>`).join('')}</div>
       ${e.items?.length ? `<h2 class="h2">Items</h2><div class="list">${e.items.map((it) => `<div class="row" style="cursor:default"><div class="main"><div class="t">${esc(it.name)}</div><div class="s">${it.who.map((w) => esc(S.firstName(w))).join(', ')}</div></div><div class="end"><div class="v">${money(it.amount)}</div></div></div>`).join('')}</div>` : ''}
       ${e.note ? `<h2 class="h2">Note</h2><div class="card">${esc(e.note)}</div>` : ''}
+      ${commentsHTML(id)}
       ${e.receiptId ? `<h2 class="h2">Bill</h2><div id="rimg"><div class="sk" style="height:220px;border-radius:14px"></div></div>` : ''}
       ${e.text ? `<p class="faint small" style="margin:14px 4px">Added from: “${esc(e.text)}”</p>` : ''}
       ${e.deleted ? '' : `<div class="btns" style="margin-top:18px">
@@ -706,6 +709,8 @@ function viewExpense(id) {
         <button class="btn danger" data-act="delExpense" data-id="${id}">${icon('trash', 'sm')} Delete</button></div>`}
       <p class="faint small" style="margin:14px 4px">Added ${new Date(e.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}${e.updatedAt - e.createdAt > 2000 ? ' · edited ' + new Date(e.updatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}${e.imported ? ' · imported' : ''}</p>`,
     async mount(v) {
+      const cf = $('#cmt', v);
+      if (cf) cf.onsubmit = (ev) => { ev.preventDefault(); const t = cf.t.value.trim(); if (!t) return; S.addComment(e.gid, id, t); buzz(); render(); };
       if (e.receiptId) {
         const b = await S.getReceipt(e.receiptId);
         const box = $('#rimg', v);
@@ -777,6 +782,25 @@ function draftSlots() {
 function splitLabel(sp) {
   if (!sp) return '';
   return { equal: 'equally', exact: 'by amount', percent: 'by %', shares: 'by shares', items: 'by items' }[sp.mode] || '';
+}
+
+// ---------- comments & what's new ----------
+const ago = (ts) => { const s = (Date.now() - ts) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : fmtDate(ts); };
+function commentsHTML(eid) {
+  const cs = S.commentsFor(eid);
+  return `<h2 class="h2">Comments ${cs.length ? `<span class="faint small">${cs.length}</span>` : ''}</h2>
+    ${cs.length ? `<div class="list">${cs.map((c) => `<div class="row" style="cursor:default;align-items:flex-start">${av(c.by, 'sm')}<div class="main"><div class="s"><b style="color:var(--text)">${esc(S.pname(c.by))}</b> · ${ago(c.createdAt)}</div><div style="white-space:pre-wrap;word-break:break-word">${esc(c.text)}</div></div>${c.by === st().me ? `<button class="icon-btn" data-act="delComment" data-id="${c.id}" aria-label="Delete comment">${icon('x', 'sm')}</button>` : ''}</div>`).join('')}</div>` : ''}
+    <form class="quick" id="cmt" style="margin-top:10px"><input name="t" maxlength="300" placeholder="Add a comment: “I paid the tip too”" aria-label="Add a comment" autocomplete="off"><button class="mic" type="submit" aria-label="Post comment">${icon('check')}</button></form>`;
+}
+// Changes by other people in a live group since you last opened it.
+function whatsNew(gid) {
+  const g = st().groups[gid], me = st().me, seen = g.seenAt || 0;
+  if (!g.live?.key) return [];
+  const ex = Object.values(st().expenses).filter((e) => e.gid === gid && e.updatedAt > seen && (e.editedBy || e.by) && (e.editedBy || e.by) !== me)
+    .map((e) => ({ at: e.updatedAt, who: e.editedBy || e.by, href: '#/e/' + e.id, text: e.deleted ? `deleted ${e.desc}` : e.createdAt === e.updatedAt || e.updatedAt - e.createdAt < 2000 ? `added ${e.desc} · ${money(e.amount)}` : `edited ${e.desc}` }));
+  const cm = Object.values(st().comments || {}).filter((c) => c.gid === gid && !c.deleted && c.updatedAt > seen && c.by !== me)
+    .map((c) => ({ at: c.updatedAt, who: c.by, href: '#/e/' + c.eid, text: `commented on ${st().expenses[c.eid]?.desc || 'an expense'}: “${c.text.slice(0, 60)}”` }));
+  return [...ex, ...cm].sort((a, b) => b.at - a.at).slice(0, 8);
 }
 
 // ---------- add / edit ----------
@@ -1229,7 +1253,7 @@ async function viewJoin(gid, key) {
         }
         if (!remoteMe) remoteMe = st().me; // new member: they appear under their own id
         const map = remoteMe !== st().me ? { [remoteMe]: st().me } : {};
-        st().groups[gid] = { id: gid, name: d.name, nameAt: d.nameAt, members: [st().me], createdAt: Date.now(), simplify: true, hue: hue(d.name), live: { key, map } };
+        st().groups[gid] = { id: gid, name: d.name, nameAt: d.nameAt, members: [st().me], createdAt: Date.now(), simplify: true, hue: hue(d.name), seenAt: Date.now(), live: { key, map } };
         Sync.apply(gid, d);
         const r = await Sync.sync(gid);
         if (r.ok) st().groups[gid].live.sig = liveSig(gid);
@@ -1500,6 +1524,8 @@ const ACT = {
     });
   },
   print: () => print(),
+  delComment: (b) => { S.deleteComment(b.dataset.id); render(); },
+  seenGroup: (b) => { st().groups[b.dataset.g].seenAt = Date.now(); S.save(); render(); },
   resetFlags: () => { delete st().settings.flags; S.save(); render(); },
   delSample: (b) => { const g = st().groups[b.dataset.g]; g.deleted = true; S.save(); go('/'); toast('Sample removed', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); },
   loadSample: () => go('/g/' + seedSample()),

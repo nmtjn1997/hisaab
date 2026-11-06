@@ -27,6 +27,8 @@ function cleanExpense(e) {
     note: str(e.note, 200),
     text: e.text ? str(e.text, 300) : undefined,
     deleted: !!e.deleted,
+    by: ID.test(e.by || '') ? e.by : undefined,
+    editedBy: ID.test(e.editedBy || '') ? e.editedBy : undefined,
     createdAt: int(e.createdAt),
     updatedAt: int(e.updatedAt),
   };
@@ -34,7 +36,7 @@ function cleanExpense(e) {
 
 /** Validate and trim untrusted group data. */
 export function cleanGroup(g) {
-  if (!g || typeof g !== 'object') return { name: '', nameAt: 0, members: [], people: {}, expenses: {} };
+  if (!g || typeof g !== 'object') return { name: '', nameAt: 0, members: [], people: {}, expenses: {}, comments: {} };
   const people = {};
   for (const id in g.people || {}) {
     if (!ID.test(id) || Object.keys(people).length >= 200) continue;
@@ -47,7 +49,14 @@ export function cleanGroup(g) {
     const e = cleanExpense(g.expenses[id]);
     if (e && e.id === id) expenses[id] = e;
   }
+  const comments = {};
+  for (const id in g.comments || {}) {
+    const c = g.comments[id];
+    if (!ID.test(id) || !c || !ID.test(c.eid || '') || !ID.test(c.by || '') || Object.keys(comments).length >= 5000) continue;
+    comments[id] = { id, eid: c.eid, by: c.by, text: str(c.text, 300), deleted: !!c.deleted, createdAt: int(c.createdAt), updatedAt: int(c.updatedAt) };
+  }
   return {
+    comments,
     name: str(g.name, 50),
     nameAt: int(g.nameAt),
     members: (Array.isArray(g.members) ? g.members : []).filter((m) => ID.test(m)).slice(0, 200),
@@ -65,6 +74,8 @@ export function mergeGroup(a, b) {
   for (const id in b.expenses) expenses[id] = newer(expenses[id], b.expenses[id]);
   const people = { ...a.people };
   for (const id in b.people) people[id] = newer(people[id], b.people[id]);
+  const comments = { ...(a.comments || {}) };
+  for (const id in b.comments || {}) comments[id] = newer(comments[id], b.comments[id]);
   const named = (b.nameAt || 0) > (a.nameAt || 0) ? b : a;
-  return { name: named.name || a.name || b.name, nameAt: named.nameAt || 0, members: [...new Set([...(a.members || []), ...(b.members || [])])], people, expenses };
+  return { name: named.name || a.name || b.name, nameAt: named.nameAt || 0, members: [...new Set([...(a.members || []), ...(b.members || [])])], people, expenses, comments };
 }

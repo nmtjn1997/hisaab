@@ -294,3 +294,11 @@ t('receipt: dropped item line becomes a placeholder, tax from totals', () => {
   assert.equal(r.extraSum, 15000);
   assert.equal(r.items.reduce((a, i) => a + i.amount, 0) + r.extraSum, r.total);
 });
+
+t('merge: comments union, newer wins, junk dropped', () => {
+  const a = cleanGroup({ comments: { c1: { eid: 'e1', by: 'x', text: 'hi', createdAt: 1, updatedAt: 1 } } });
+  const b = cleanGroup({ comments: { c2: { eid: 'e1', by: 'y', text: 'yo', createdAt: 2, updatedAt: 2 }, c1: { eid: 'e1', by: 'x', text: 'hi', deleted: true, createdAt: 1, updatedAt: 3 }, 'bad id': { eid: 'e1', by: 'y', text: 'x' } } });
+  const m = mergeGroup(a, b);
+  assert.deepEqual(Object.keys(m.comments).sort(), ['c1', 'c2']);
+  assert.equal(m.comments.c1.deleted, true);
+});

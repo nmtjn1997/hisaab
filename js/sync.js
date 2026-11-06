@@ -18,6 +18,8 @@ const mapExp = (e, f) => ({
   owed: mapObj(e.owed, f),
   split: e.split ? { ...e.split, parts: mapObj(e.split.parts, f) } : e.split,
   items: e.items ? e.items.map((i) => ({ ...i, who: i.who.map(f) })) : e.items,
+  by: e.by ? f(e.by) : e.by,
+  editedBy: e.editedBy ? f(e.editedBy) : e.editedBy,
 });
 
 export function payload(gid) {
@@ -28,7 +30,9 @@ export function payload(gid) {
   for (const id of ids) { const p = st.people[id]; if (p) people[f(id)] = { id: f(id), name: p.name, upi: p.upi || '', updatedAt: p.updatedAt || p.createdAt || 0 }; }
   const expenses = {};
   for (const e of exps) { const { gid: _g, receiptId: _r, imported: _i, ...rest } = mapExp(e, f); expenses[rest.id] = rest; }
-  return { name: g.name, nameAt: g.nameAt || g.createdAt || 0, members: g.members.map(f), people, expenses };
+  const comments = {};
+  for (const c of Object.values(st.comments || {})) if (c.gid === gid) { const { gid: _g, ...rest } = c; comments[c.id] = { ...rest, by: f(c.by) }; }
+  return { name: g.name, nameAt: g.nameAt || g.createdAt || 0, members: g.members.map(f), people, expenses, comments };
 }
 
 /** Write merged remote data into local state. Returns how many expenses changed. */
@@ -49,6 +53,11 @@ export function apply(gid, data) {
       st.expenses[id] = { ...re, gid, receiptId: le?.receiptId };
       changed++;
     }
+  }
+  st.comments ||= {};
+  for (const id in data.comments || {}) {
+    const rc = data.comments[id], lc = st.comments[id];
+    if (!lc || (rc.updatedAt || 0) > (lc.updatedAt || 0)) { st.comments[id] = { ...rc, gid, by: f(rc.by) }; changed++; }
   }
   const members = data.members.map(f);
   for (const m of members) if (!g.members.includes(m)) { g.members.push(m); changed++; }

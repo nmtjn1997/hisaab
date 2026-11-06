@@ -4,7 +4,6 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
-- Per-expense comments and an activity feed for live groups.
 5. Recurring expenses (rent, maid, Netflix) with a monthly auto-add.
 7. Shareable balance card image (PNG) for WhatsApp.
 8. Per-group currency and a "trip budget" with daily spend.
@@ -12,6 +11,7 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Comments on expenses (synced in live groups) and a "What's new" card listing others' adds, edits, deletes and comments since you last looked.
 - 2026-11-06 Live checklist: every field reports said / assumed / missing / does not add up, shown as green, yellow and red pills with one next question, in the mic overlay and the text box. Mic stops faster when everything is said, waits when the amount is missing, and has a who-had-what mode for scanned bills.
 - 2026-11-06 Parser: Hindi amounts (do hazaar paanch sau, dedh sau, saade teen hazaar), sound-alike names for speech (Dipak, Himmy, Pria, Nameet).
 - 2026-11-06 Bill scan: greyscale + contrast stretch + upscale, PSM 4, digit fixes (O/l/S/B, 420,00), shop name and date, Sub Total as truth (dropped line becomes a placeholder), tax from Grand Total minus Sub Total, reconcile pills.
