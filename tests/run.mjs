@@ -437,3 +437,13 @@ t('history: undoing a removal is not flagged as lowering own share', () => {
   const sneaky = { ...before, owed: { n: 100000, d: 300000 }, editedBy: 'n' };
   assert.deepEqual(describeHist(diffEntry({ ...before, owed: { n: 200000, d: 200000 } }, sneaky), (x) => x, String).flags, ['self_share_down']);
 });
+
+import { budgetStatus } from '../js/money.js';
+t('budget pace: per day left and on-track', () => {
+  const start = new Date(2026, 10, 1, 9).getTime(), end = new Date(2026, 10, 10, 9).getTime();
+  const b = budgetStatus({ budget: 5000000, spent: 2000000, start, end, now: new Date(2026, 10, 4, 20).getTime() });
+  assert.equal(b.left, 3000000); assert.equal(b.pct, 40); assert.equal(b.daysLeft, 6);
+  assert.equal(b.perDayLeft, 500000); assert.equal(b.perDaySoFar, 500000); assert.equal(b.onTrack, true);
+  const over = budgetStatus({ budget: 100000, spent: 150000 });
+  assert.equal(over.over, true); assert.equal(over.pct, 150); assert.equal(over.daysLeft, null);
+});

@@ -7,6 +7,29 @@ const nf2 = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFr
 // Whole rupees print without decimals; anything with paise always shows two digits.
 export const fmt = (p, cur = '₹') => (p < 0 ? '-' : '') + cur + (Math.abs(p) % 100 ? nf2 : nf0).format(Math.abs(p) / 100);
 
+/**
+ * Trip budget pace. Amounts in paise, times in ms. start/end optional (whole days, inclusive).
+ * @returns {{spent, budget, left, pct, over, daysLeft, perDayLeft, perDaySoFar, onTrack}}
+ */
+export function budgetStatus({ budget, spent, start, end, now = Date.now() }) {
+  const day = 864e5, d0 = (t) => { const x = new Date(t); x.setHours(0, 0, 0, 0); return x.getTime(); };
+  const left = budget - spent;
+  const pct = budget ? Math.min(999, Math.round((spent / budget) * 100)) : 0;
+  let daysLeft = null, perDayLeft = null, perDaySoFar = null, onTrack = null;
+  if (start) {
+    const elapsed = Math.max(1, Math.floor((d0(Math.min(now, end || now)) - d0(start)) / day) + 1);
+    perDaySoFar = Math.round(spent / elapsed / 100) * 100; // whole rupees read better
+    if (end) {
+      const total = Math.max(1, Math.floor((d0(end) - d0(start)) / day) + 1);
+      daysLeft = Math.max(0, total - elapsed + (now < start ? 0 : 0));
+      if (now < start) daysLeft = total;
+      perDayLeft = daysLeft ? Math.floor(Math.max(0, left) / daysLeft / 100) * 100 : 0;
+      onTrack = spent <= Math.round((budget * Math.min(total, elapsed)) / total);
+    }
+  }
+  return { spent, budget, left, pct, over: left < 0, daysLeft, perDayLeft, perDaySoFar, onTrack };
+}
+
 // Split `total` across keys by integer weights; remainder paise go to the
 // largest fractional parts so the parts always sum exactly to total.
 export function allocate(total, weights) {

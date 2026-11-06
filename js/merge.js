@@ -60,7 +60,11 @@ export function cleanGroup(g) {
     if (!ID.test(id) || !c || !ID.test(c.eid || '') || !ID.test(c.by || '') || Object.keys(comments).length >= 5000) continue;
     comments[id] = { id, eid: c.eid, by: c.by, text: str(c.text, 300), deleted: !!c.deleted, createdAt: int(c.createdAt), updatedAt: int(c.updatedAt) };
   }
+  const CURS = new Set(['₹', '$', '€', '£', 'AED ', 'S$', '฿', '¥', 'Rp ', 'RM ', 'A$', 'C$', 'NPR ', 'LKR ']);
+  const m = g.meta && typeof g.meta === 'object' ? g.meta : null;
+  const meta = m ? { cur: CURS.has(m.cur) ? m.cur : null, budget: m.budget ? Math.max(0, int(m.budget)) : null, start: m.start ? int(m.start) : null, end: m.end ? int(m.end) : null, at: int(m.at) } : null;
   return {
+    meta,
     comments,
     name: str(g.name, 50),
     nameAt: int(g.nameAt),
@@ -97,5 +101,6 @@ export function mergeGroup(a, b) {
   const comments = { ...(a.comments || {}) };
   for (const id in b.comments || {}) comments[id] = newer(comments[id], b.comments[id]);
   const named = (b.nameAt || 0) > (a.nameAt || 0) ? b : a;
-  return { name: named.name || a.name || b.name, nameAt: named.nameAt || 0, members: [...new Set([...(a.members || []), ...(b.members || [])])], people, expenses, comments };
+  const meta = (b.meta?.at || 0) > (a.meta?.at || 0) ? b.meta : a.meta || b.meta || null;
+  return { name: named.name || a.name || b.name, nameAt: named.nameAt || 0, members: [...new Set([...(a.members || []), ...(b.members || [])])], people, expenses, comments, meta };
 }

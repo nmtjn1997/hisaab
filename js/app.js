@@ -1,5 +1,5 @@
 import * as S from './store.js';
-import { fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balances } from './money.js';
+import { budgetStatus, fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balances } from './money.js';
 import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseRename, phon } from './parse.js';
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
@@ -16,7 +16,12 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const st = () => S.state;
 const cur = () => st().settings.cur || '₹';
-const money = (p) => fmt(p, cur());
+// Each group can have its own currency. Screens inside a group format money in it.
+const gcur = (gid) => st().groups[gid]?.cur || cur();
+let viewCur = null;
+const money = (p) => fmt(p, viewCur || cur());
+const inCur = (gid, fn) => { const prev = viewCur; viewCur = gcur(gid); try { return fn(); } finally { viewCur = prev; } };
+const sameCur = (e) => gcur(e.gid) === cur();
 const flag = (k) => S.state.settings.flags?.[k] ?? flagDefault(k);
 const buzz = () => flag('haptics') && navigator.vibrate?.(8);
 const hue = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
@@ -81,7 +86,13 @@ function confirmSheet(title, body, okLabel, onOk, danger = true) {
 const memberList = (gid) => (st().groups[gid]?.members || []).filter((id) => st().people[id] && !st().people[id].deleted);
 const peopleArr = () => Object.values(st().people).filter((p) => !p.deleted).map((p) => (p.id === st().me ? { ...p, aliases: ['me'] } : p));
 function myGroupNet(gid) { return S.groupBalances(gid)[st().me] || 0; }
-function personNets() { return pairwise(S.allExpenses(), st().me); }
+function personNets() { return pairwise(S.allExpenses().filter(sameCur), st().me); }
+// Balances in groups that use another currency, kept apart: {"$": {pid: net}}
+function otherNets() {
+  const by = {};
+  for (const e of S.allExpenses()) if (!sameCur(e)) (by[gcur(e.gid)] ||= []).push(e);
+  return Object.fromEntries(Object.entries(by).map(([c, ex]) => [c, pairwise(ex, st().me)]));
+}
 function pairwiseInGroup(gid, other) { return pairwise(S.groupExpenses(gid), st().me)[other] || 0; }
 function transfersFor(gid) {
   const g = st().groups[gid];
@@ -111,7 +122,8 @@ function impactLine(e) {
   if (net < 0) return { k: 'you borrowed', v: money(-net), cls: 'neg', s };
   return { k: 'no balance', v: '', cls: 'faint', s };
 }
-function expenseRow(e, showGroup = false) {
+function expenseRow(e, showGroup = false) { return inCur(e.gid, () => expenseRowIn(e, showGroup)); }
+function expenseRowIn(e, showGroup) {
   const d = new Date(e.date);
   const im = impactLine(e);
   const g = st().groups[e.gid];
@@ -172,6 +184,16 @@ function runRepeats() {
   }
   toast(due.length === 1 ? `Added ${st().expenses[due[0].id].desc} (repeats)` : `Added ${due.length} repeating expenses`);
   render();
+}
+function budgetHTML(g, total) {
+  if (!g.budget) return '';
+  const b = budgetStatus({ budget: g.budget, spent: total, start: g.start, end: g.end });
+  const color = b.over ? 'var(--neg)' : b.onTrack === false || b.pct >= 85 ? 'var(--warn)' : 'var(--pos)';
+  const line = b.over ? `${money(-b.left)} over budget` : b.daysLeft != null ? `${money(b.left)} left · ${b.daysLeft ? `${money(b.perDayLeft)} a day for ${b.daysLeft} day${b.daysLeft === 1 ? '' : 's'}` : 'trip over'}` : `${money(b.left)} left`;
+  return `<div class="budget" style="margin-top:14px">
+    <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;gap:8px"><span>Budget ${money(g.budget)}</span><span style="color:${color}">${b.pct}%</span></div>
+    <div class="track" style="margin-top:6px;height:8px"><i style="width:${Math.min(100, b.pct)}%;background:${color}"></i></div>
+    <div class="small" style="margin-top:6px;color:${color};font-weight:600">${line}${b.perDaySoFar != null ? ` <span class="faint" style="font-weight:500">· spending ${money(b.perDaySoFar)} a day so far</span>` : ''}</div></div>`;
 }
 function ensureEveryday() {
   let g = S.groupList().find((x) => x.name === 'Everyday');
@@ -295,6 +317,7 @@ async function render() {
   closeSheet?.();
   const { path, q } = parseHash();
   Q = q;
+  { const gm = path.match(/^\/g\/(\w+)/), em = path.match(/^\/e\/(\w+)/); viewCur = gm ? gcur(gm[1]) : em && st().expenses[em[1]] ? gcur(st().expenses[em[1]].gid) : null; }
   if (!st().me && !/^\/(welcome|demo|import\/|join\/)/.test(path)) { sessionStorage.setItem('after-welcome', location.hash); return go('/welcome'); }
   let v = null;
   for (const [re, fn] of routes) {
@@ -466,6 +489,7 @@ function viewHome() {
       <div class="muted small" style="font-weight:600">${greet}, ${esc(name)}</div>
       <div class="big ${net > 0 ? 'pos' : net < 0 ? 'neg' : ''}" style="margin-top:6px">${net === 0 ? 'All square' : `<span data-count="${Math.abs(net)}">${money(Math.abs(net))}</span>`}</div>
       <div class="muted small">${net > 0 ? 'overall, you are owed' : net < 0 ? 'overall, you owe' : 'nobody owes anybody'}</div>
+      ${Object.entries(otherNets()).map(([c, n]) => { const v = Object.values(n).reduce((x, y) => x + y, 0); return v ? `<div class="small muted" style="margin-top:6px">Plus ${v > 0 ? 'you get' : 'you owe'} <b class="${v > 0 ? 'pos' : 'neg'}">${esc(fmt(Math.abs(v), c))}</b> in ${esc(c.trim())} groups</div>` : ''; }).join('')}
       <div class="row2"><div class="pill"><span>You get</span><b class="pos" data-count="${get}">${money(get)}</b></div><div class="pill"><span>You pay</span><b class="neg" data-count="${pay}">${money(pay)}</b></div></div>
     </section>
     ${needsBackup() ? `<div class="note warn" style="margin-top:14px;align-items:center">${icon('download', 'sm')}<span style="flex:1">Your data lives only on this phone. Save a backup now and then.</span><button class="btn sm" data-act="export">Back up</button></div>` : ''}
@@ -575,6 +599,7 @@ function viewGroup(gid, tab = 'expenses') {
     actions: `<button class="icon-btn" data-act="shareGroup" data-g="${gid}" aria-label="Share">${icon('share')}</button><button class="icon-btn" data-act="groupMenu" data-g="${gid}" aria-label="Group options">${icon('more')}</button>`,
     html: `${g.sample ? `<div class="note" style="margin:4px 0 12px;align-items:center">${icon('sparkle', 'sm')}<span style="flex:1">Sample trip to look around. Delete it when you are ready.</span><button class="btn sm" data-act="delSample" data-g="${gid}">Delete</button></div>` : ''}<section class="hero" style="padding:16px 18px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="av lg" style="--h:${g.hue}">${esc(initials(g.name))}</span><div style="flex:1;min-width:140px"><div class="small muted" style="font-weight:600">${myNet > 0 ? 'You get back' : myNet < 0 ? 'You owe' : 'You are'}</div><div style="font:800 28px var(--display);letter-spacing:-.02em" class="${myNet > 0 ? 'pos' : myNet < 0 ? 'neg' : ''} num">${myNet ? `<span data-count="${Math.abs(myNet)}">${money(Math.abs(myNet))}</span>` : 'settled up'}</div></div><div style="text-align:right;margin-left:auto"><div class="small muted" style="font-weight:600;white-space:nowrap">Total spend</div><div style="font:700 17px var(--display)" class="num">${money(total)}</div></div></div>
+        ${budgetHTML(g, total)}
         ${g.live?.key ? `<div style="margin-top:12px;display:flex;gap:8px;align-items:center"><span class="tag a" id="livechip">${g.live.error ? esc(g.live.error) : 'Live'}</span><span class="faint small">Everyone with the link sees changes</span></div>` : ''}
       </section>
       <nav class="seg" style="margin-top:14px" aria-label="Group sections">${tabs.map(([k, l]) => `<a href="#/g/${gid}${k === 'expenses' ? '' : '/' + k}" ${tab === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
@@ -646,7 +671,7 @@ function viewStats() {
   const range = Q.get('r') || 'all';
   const since = range === 'month' ? new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime() : range === '3m' ? Date.now() - 92 * 864e5 : 0;
   const me = st().me;
-  const exps = S.allExpenses().filter((e) => e.kind !== 'settle' && e.date >= since && (me in e.owed || me in e.paid));
+  const exps = S.allExpenses().filter((e) => sameCur(e) && e.kind !== 'settle' && e.date >= since && (me in e.owed || me in e.paid));
   const byGroup = {};
   exps.forEach((e) => (byGroup[e.gid] = (byGroup[e.gid] || 0) + (e.owed[me] || 0)));
   const gs = Object.entries(byGroup).sort((a, b) => b[1] - a[1]);
@@ -1104,6 +1129,7 @@ function heardChips(heard) {
 const cap = (w) => String(w).replace(/\b\p{L}/gu, (c) => c.toUpperCase());
 
 function renderPreview() {
+  if (draft) viewCur = gcur(draft.gid);
   const pv = $('#pv');
   if (!pv) return;
   if (draft.pending && draft.preview) {
@@ -1130,6 +1156,7 @@ function renderPreview() {
 }
 
 function renderForm() {
+  if (draft) viewCur = gcur(draft.gid);
   const f = $('#form');
   if (!f) return;
   if (draft.scan?.stage === 'done') renderScan();
@@ -1144,7 +1171,7 @@ function renderForm() {
   const isSettle = draft.kind === 'settle';
   f.innerHTML = `
     <div class="card" style="margin-top:14px">
-      <div class="amount-in"><span class="faint">${esc(cur())}</span><input id="amt" inputmode="decimal" placeholder="0" value="${esc(draft.amount)}" aria-label="Amount" autocomplete="off"></div>
+      <div class="amount-in"><span class="faint">${esc(gcur(draft.gid))}</span><input id="amt" inputmode="decimal" placeholder="0" value="${esc(draft.amount)}" aria-label="Amount" autocomplete="off"></div>
       ${isSettle ? '' : `<input class="input" id="desc" style="margin-top:10px" placeholder="What was it for?" value="${esc(draft.desc)}" maxlength="80" aria-label="Description">`}
       <div style="display:flex;gap:8px;margin-top:10px">
         <select class="input" id="grp" style="flex:1.4" aria-label="Group">${draft.gid ? '' : '<option value="">Pick a group</option>'}${groups.map((g) => `<option value="${g.id}" ${g.id === draft.gid ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}<option value="__new">+ New group</option></select>
@@ -1257,6 +1284,7 @@ function switchGroup(gid) {
   renderPreview(); renderForm();
 }
 function renderSave() {
+  if (draft) viewCur = gcur(draft.gid);
   const b = $('#save');
   if (!b) return;
   if (draft.pending) { b.innerHTML = `${icon('check', 'sm')} Apply changes`; b.disabled = false; $('#probs').textContent = ''; return; }
@@ -1268,6 +1296,7 @@ function renderSave() {
 }
 
 function renderScan() {
+  if (draft) viewCur = gcur(draft.gid);
   const box = $('#scanbox');
   if (!box || !draft.scan) { if (box) box.innerHTML = ''; return; }
   const s = draft.scan;
@@ -1744,7 +1773,7 @@ const ACT = {
         open(waLink(text + '\n' + url), '_blank', 'noopener');
       });
       el.querySelector('[data-s=img]').onclick = (e) => busy(e.currentTarget, async () => { await shareCard(gid); close(); });
-      (el.querySelector('[data-s=wa]') || {}).onclick = () => { close(); const real = S.groupExpenses(gid).filter((e) => e.kind !== 'settle'); shareText(groupSummaryText({ group: st().groups[gid], transfers: transfersFor(gid), totals: { total: real.reduce((s, e) => s + e.amount, 0) }, name: (id) => S.pname(id, false), cur: cur() })); };
+      (el.querySelector('[data-s=wa]') || {}).onclick = () => { close(); const real = S.groupExpenses(gid).filter((e) => e.kind !== 'settle'); shareText(groupSummaryText({ group: st().groups[gid], transfers: transfersFor(gid), totals: { total: real.reduce((s, e) => s + e.amount, 0) }, name: (id) => S.pname(id, false), cur: gcur(gid) })); };
       el.querySelector('[data-s=link]').onclick = (e) => busy(e.currentTarget, async () => {
         const url = await groupLink(gid);
         close();
@@ -1776,9 +1805,23 @@ const ACT = {
     const g = st().groups[b.dataset.g];
     sheet(`<h3>${esc(g.name)}</h3>
       <form id="rn"><label class="field"><span>Name</span><input class="input" name="n" value="${esc(g.name)}" maxlength="50"></label><button class="btn block">Rename</button></form>
+      <form id="trip" style="margin-top:16px"><h3 style="font-size:16px;margin:0 0 10px">Trip settings</h3>
+        <div style="display:flex;gap:8px"><label class="field" style="flex:1"><span>Currency</span><select class="input" name="cur">${['₹', '$', '€', '£', 'AED ', 'S$', '฿', '¥', 'Rp ', 'RM ', 'A$', 'C$', 'NPR ', 'LKR '].map((c) => `<option ${c === gcur(g.id) ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+        <label class="field" style="flex:1.4"><span>Budget (optional)</span><input class="input" name="budget" inputmode="decimal" placeholder="50000" value="${g.budget ? g.budget / 100 : ''}"></label></div>
+        <div style="display:flex;gap:8px"><label class="field" style="flex:1"><span>From</span><input class="input" type="date" name="start" value="${g.start ? isoDate(g.start) : ''}"></label><label class="field" style="flex:1"><span>To</span><input class="input" type="date" name="end" value="${g.end ? isoDate(g.end) : ''}"></label></div>
+        <button class="btn block">Save trip settings</button>
+        <p class="faint small" style="margin:6px 4px 0">With dates, the group shows how much you can spend each day to stay on budget.</p></form>
       ${g.live?.key ? `<button class="btn block" style="margin-top:12px" data-x="rotate">${icon('link', 'sm')} Make a new live link</button><p class="faint small" style="margin:6px 4px 0">The old link stops working. Use it if the link reached the wrong person.</p>` : ''}
       <div class="btns" style="margin-top:12px"><button class="btn" data-x="arch">${g.archived ? 'Unarchive' : 'Archive'}</button><button class="btn danger" data-x="del">${icon('trash', 'sm')} Delete</button></div>`, (el, close) => {
       $('#rn', el).onsubmit = (e) => { e.preventDefault(); g.name = e.target.n.value.trim().slice(0, 50) || g.name; g.nameAt = Date.now(); S.save(); close(); render(); };
+      $('#trip', el).onsubmit = (e) => {
+        e.preventDefault();
+        const f = e.target, at = (v) => (v ? new Date(v + 'T12:00:00').getTime() : null);
+        const start = at(f.start.value), end = at(f.end.value);
+        if (start && end && end < start) { toast('The end date is before the start date'); return; }
+        Object.assign(g, { cur: f.cur.value === cur() ? null : f.cur.value, budget: toPaise(parseFloat(f.budget.value) || 0) || null, start, end, metaAt: Math.max(Date.now(), (g.metaAt || 0) + 1) });
+        S.save(); close(); render(); toast('Trip settings saved');
+      };
       el.querySelector('[data-x=rotate]')?.addEventListener('click', (e) => busy(e.currentTarget, async () => { await Sync.rotate(g.id); close(); toast('New link ready. Share it again with your group.'); render(); }));
       el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; S.save(); close(); go('/groups'); };
       el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Delete ${g.name}?`, 'The group and its expenses disappear from your lists. You can undo right after.', 'Delete', () => { g.deleted = true; S.save(); go('/groups'); toast('Group deleted', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); }); };

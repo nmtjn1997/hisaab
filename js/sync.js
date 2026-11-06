@@ -32,7 +32,8 @@ export function payload(gid) {
   for (const e of exps) { const { gid: _g, receiptId: _r, imported: _i, ...rest } = mapExp(e, f); expenses[rest.id] = rest; }
   const comments = {};
   for (const c of Object.values(st.comments || {})) if (c.gid === gid) { const { gid: _g, ...rest } = c; comments[c.id] = { ...rest, by: f(c.by) }; }
-  return { name: g.name, nameAt: g.nameAt || g.createdAt || 0, members: g.members.map(f), people, expenses, comments };
+  const meta = g.metaAt ? { cur: g.cur || null, budget: g.budget || null, start: g.start || null, end: g.end || null, at: g.metaAt } : null;
+  return { name: g.name, nameAt: g.nameAt || g.createdAt || 0, members: g.members.map(f), people, expenses, comments, meta };
 }
 
 /** Write merged remote data into local state. Returns how many expenses changed. */
@@ -63,6 +64,7 @@ export function apply(gid, raw) {
   }
   const members = data.members.map(f);
   for (const m of members) if (!g.members.includes(m)) { g.members.push(m); changed++; }
+  if (data.meta && (data.meta.at || 0) > (g.metaAt || 0)) { Object.assign(g, { cur: data.meta.cur, budget: data.meta.budget, start: data.meta.start, end: data.meta.end, metaAt: data.meta.at }); changed++; }
   if ((data.nameAt || 0) > (g.nameAt || 0)) { g.name = data.name; g.nameAt = data.nameAt; changed++; }
   return changed;
 }
@@ -77,7 +79,7 @@ export function sig(gid) {
   for (const e of Object.values(st.expenses)) if (e.gid === gid) rows.push(e.id + ':' + e.updatedAt);
   for (const c of Object.values(st.comments || {})) if (c.gid === gid) rows.push(c.id + ':' + c.updatedAt);
   rows.sort().forEach(mix);
-  mix(`${g.name}|${g.nameAt || 0}|${g.members.join(',')}`);
+  mix(`${g.name}|${g.nameAt || 0}|${g.members.join(',')}|${g.metaAt || 0}`);
   return `${rows.length}:${h.toString(36)}`;
 }
 
