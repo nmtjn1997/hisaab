@@ -136,7 +136,7 @@ t('simplify settles everything', () => {
   assert.ok(tr.length <= 2);
 });
 
-console.log(`${n} passed`);
+process.on("exit", () => console.log(`${n} passed`));
 
 import { assignItems } from '../js/parse.js';
 import { parseReceipt } from '../js/receipt.js';
@@ -155,3 +155,32 @@ t('receipt text', () => {
   assert.equal(r.extras.length, 2);
 });
 console.log('receipt+items ok');
+
+t('hinglish: maine diye', () => {
+  const d = P('maine 500 diye pizza ke liye');
+  assert.deepEqual(d.paid, { me: 50000 }); assert.equal(d.desc, 'Pizza');
+  assert.equal(Object.keys(d.owed).length, 4);
+});
+t('hinglish: X ne diye', () => {
+  const d = P('cab 300 Rahul ne diye');
+  assert.deepEqual(d.paid, { rah: 30000 }); assert.equal(d.desc, 'Cab');
+});
+t('hinglish: sabme baant do', () => {
+  const d = P('chai 200 Deepak ne bhara, sabme baant do');
+  assert.deepEqual(d.paid, { dee: 20000 });
+  assert.equal(Object.keys(d.owed).length, 4);
+});
+t('hinglish: mere aur Deepak ke beech', () => {
+  const d = P('dinner 800 mere aur Deepak ke beech');
+  assert.deepEqual(d.owed, { me: 40000, dee: 40000 });
+});
+t('hinglish: X ko diye is a loan', () => {
+  const d = P('maine Rahul ko 200 diye');
+  assert.deepEqual(d.paid, { me: 20000 });
+  assert.deepEqual(d.owed, { rah: 20000 });
+});
+t('hinglish: mere liye', () => {
+  const d = P('Deepak ne mere liye 300 diye');
+  assert.deepEqual(d.paid, { dee: 30000 });
+  assert.deepEqual(d.owed, { me: 30000 });
+});

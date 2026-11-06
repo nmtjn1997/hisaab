@@ -26,17 +26,17 @@ export function wordsToNumbers(s) {
   });
 }
 
-const ME = new Set(['i', 'me', 'my', 'myself', 'mine', 'main', 'mai', 'maine', 'mera', 'mujhe', 'self']);
-const ALL = new Set(['everyone', 'everybody', 'all', 'us', 'we', 'group', 'sab', 'sabka', 'sabhi', 'everyones']);
-const PAY = new Set(['paid', 'pay', 'pays', 'payed', 'gave', 'spent', 'covered', 'bought', 'diya', 'kiya', 'chukaya']);
-const SPLIT = new Set(['split', 'splitted', 'between', 'among', 'amongst', 'divide', 'divided', 'share', 'shared', 'sharing', 'owns', 'own', 'owned', 'bata', 'baant']);
+const ME = new Set(['i', 'me', 'my', 'myself', 'mine', 'main', 'mai', 'maine', 'mera', 'mere', 'meri', 'mujhe', 'mujh', 'self']);
+const ALL = new Set(['everyone', 'everybody', 'all', 'us', 'we', 'group', 'sab', 'sabka', 'sabhi', 'everyones', 'sabme', 'sabmein', 'sabke', 'sabko', 'sabne', 'hum', 'humne', 'humsab', 'saare', 'sare']);
+const PAY = new Set(['paid', 'pay', 'pays', 'payed', 'gave', 'spent', 'covered', 'bought', 'diya', 'diye', 'kiya', 'kiye', 'chukaya', 'chukaye', 'bhara', 'bhare', 'bhari', 'bharaa', 'bharya', 'kharcha', 'kharche']);
+const SPLIT = new Set(['split', 'splitted', 'between', 'among', 'amongst', 'divide', 'divided', 'share', 'shared', 'sharing', 'owns', 'own', 'owned', 'bata', 'baant', 'baanto', 'baato', 'beech', 'bich', 'bichme']);
 const WITH = new Set(['with', 'saath', 'along']);
 const FOR = new Set(['for', 'on', 'behalf']);
 const EXCEPT = new Set(['except', 'excluding', 'exclude', 'without', 'minus', 'not', 'but', 'chhodke', 'chodke']);
 const ONLY = new Set(['only', 'just', 'alone', 'solo', 'sirf', 'akela']);
 const EQUAL = new Set(['equally', 'evenly', 'equal', 'even', 'barabar']);
 const WAYS = new Set(['ways', 'way', 'people', 'persons', 'person', 'log', 'logo', 'members', 'heads', 'pax']);
-const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole']);
+const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole', 'liye', 'do', 'rupaye', 'rupay', 'wala', 'wali', 'thi', 'tha', 'ka', 'mein']);
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export const CATEGORIES = {
@@ -171,7 +171,8 @@ export function parseExpense(text, ctx) {
     const prev = T[i - 1], next = T[i + 1];
     const prevV = prev?.v;
     if (prev?.t === 'w' && (prevV === 'by' || prevV === 'between' || prevV === 'among' || prevV === 'amongst' || WITH.has(prevV) || EXCEPT.has(prevV) || ONLY.has(prevV))) return true;
-    if ((prevV === 'and' || prevV === ',' || prevV === '&') && T[i - 2]?.t === 'p') return true;
+    if ((prevV === 'and' || prevV === 'aur' || prevV === ',' || prevV === '&') && T[i - 2]?.t === 'p') return true;
+    if (next?.t === 'w' && (next.v === 'ne' || next.v === 'ko') && !CAT_OF[w.v]) return true;
     if (next?.t === 'w' && (PAY.has(next.v) || next.v === 'owes' || next.v === 'owe') && T[i + 2]?.v !== 'by') return w.cap || !CAT_OF[w.v];
     if (next?.t === 'num' && prev?.t === 'p') return true; // "namit 90 deepak 10"
     if (next?.t === 'num' && (prevV === 'and' || prevV === ',') && T[i - 2]?.t === 'num' && T[i - 3]?.t === 'p') return true;
@@ -229,6 +230,10 @@ export function parseExpense(text, ctx) {
   for (let i = 0; i < T.length; i++) {
     const t = T[i], prev = T[i - 1], next = T[i + 1];
     if (t.t === 'p') {
+      const n1 = next?.t === 'w' ? next.v : '', n2 = T[i + 2]?.t === 'w' ? T[i + 2].v : '';
+      if (n1 === 'ko' || n1 === 'liye' || (n1 === 'ke' && n2 === 'liye')) {
+        addOwed(t.v); only = true; lastP = null; i += n1 === 'ke' ? 2 : 1; continue;
+      }
       if (mode === 'pay') { const p = addPayer(t.v); if (payNext != null) { p.amt = payNext; payNext = null; } lastP = { id: t.v, role: 'pay' }; }
       else if (mode === 'ex') { excluded.add(t.v); lastP = null; }
       else if (mode === 'owe') { addOwed(t.v); lastP = { id: t.v, role: 'owe' }; }
@@ -238,6 +243,11 @@ export function parseExpense(text, ctx) {
     if (t.t === 'num') {
       const n = Math.round(t.v * 100);
       if (next?.t === 'w' && WAYS.has(next.v)) { ways = t.v; i++; continue; }
+      if (prev?.t === 'p' && lastP && lastP.role === 'n' && next?.t === 'w' && PAY.has(next.v)) {
+        // "maine 500 diye", "Rahul 300 paid": the amount is what they paid
+        const k = pending.indexOf(lastP.id); if (k >= 0) pending.splice(k, 1);
+        addPayer(lastP.id).amt = n; lastP = { id: lastP.id, role: 'pay' }; i++; continue;
+      }
       if (prev?.t === 'p' && lastP) {
         if (lastP.role === 'pay') { findPayer(lastP.id).amt = n; mode = 'n'; }
         else { const o = addOwed(lastP.id); o.amt = n; const k = pending.indexOf(lastP.id); if (k >= 0) pending.splice(k, 1); }
@@ -274,7 +284,7 @@ export function parseExpense(text, ctx) {
       continue;
     }
     if (w === 'by' && next?.t === 'p') { mode = 'pay'; continue; }
-    if (SPLIT.has(w)) { mode = 'owe'; if (pending.length && (prev?.t === 'p' || prev?.v === 'and')) { /* "me and rahul split" */ pending.splice(0).forEach(addOwed); } continue; }
+    if (SPLIT.has(w)) { mode = 'owe'; if (pending.length) { /* "me and rahul split", "mere aur Deepak ke beech" */ pending.splice(0).forEach(addOwed); } continue; }
     if (WITH.has(w)) { mode = 'owe'; withFlag = true; continue; }
     if (FOR.has(w)) { if (next?.t === 'p') mode = 'owe'; else descToks.push(t); continue; }
     if (EXCEPT.has(w)) { mode = 'ex'; continue; }
@@ -285,7 +295,7 @@ export function parseExpense(text, ctx) {
       continue;
     }
     if (EQUAL.has(w)) { equal = true; continue; }
-    if (w === 'and') continue;
+    if (w === 'and' || w === 'aur') continue;
     descToks.push(t);
   }
 

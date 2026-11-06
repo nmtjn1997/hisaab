@@ -22,7 +22,7 @@ const fmtDate = (ts) => { const d = new Date(ts), t = new Date(); if (dayKey(ts)
 const isoDate = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const go = (h) => { if (location.hash === '#' + h) render(); else location.hash = h; };
 const CAT_NAMES = { general: 'General', food: 'Food & drinks', groceries: 'Groceries', travel: 'Travel', fuel: 'Fuel', home: 'Home & bills', fun: 'Fun', shopping: 'Shopping', health: 'Health', settle: 'Settlement' };
-const EXAMPLES = ['Dinner 1200 split with everyone', 'Uber 340 paid by Rahul', 'Petrol 2k, I paid 1500 Deepak paid 500, split 50-50', 'Groceries 900 only me and Priya', 'Rahul owes me 250 for chai', 'Hotel 6000 split 70-30 between me and Deepak'];
+const EXAMPLES = ['Dinner 1200 split with everyone', 'Uber 340 paid by Rahul', 'Petrol 2k, I paid 1500 Deepak paid 500, split 50-50', 'Groceries 900 only me and Priya', 'Rahul owes me 250 for chai', 'Maine 800 diye pizza, sabme baant do', 'Hotel 6000 split 70-30 between me and Deepak'];
 
 // ---------- toast / sheet / busy ----------
 let toastT;
@@ -699,7 +699,7 @@ function renderPreview() {
   const pv = $('#pv');
   if (!pv) return;
   const r = draft.text.trim() ? draft.parsed : null;
-  if (!r) { pv.innerHTML = `<span class="faint small">I understand: who paid, amounts, “split with”, “only me”, 70-30, 90%, “except Priya”, “Rahul owes me 200”, yesterday.</span>`; return; }
+  if (!r) { pv.innerHTML = `<span class="faint small">I understand: who paid, amounts, “split with”, “only me”, 70-30, 90%, “except Priya”, “Rahul owes me 200”, yesterday, and Hinglish like “maine 500 diye”.</span>`; return; }
   const total = draftAmount();
   const paid = draftPaid();
   const owed = draftOwed();
