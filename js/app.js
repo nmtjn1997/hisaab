@@ -674,7 +674,8 @@ function viewAdd(editId) {
       <div class="preview" id="pv"></div>
     </div>
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
-    <div id="scanbox"></div>`}
+    <div id="scanbox"></div>
+    ${draft.text || draft.scan || editing ? '' : `<p class="faint small" id="samplehint" style="margin:8px 4px 0">No bill handy? <button class="link" style="background:none;border:0;padding:0;text-decoration:underline;cursor:pointer" data-act="sampleBill">Try a sample bill</button></p>`}`}
     <div id="form"></div>
     <div class="sticky-cta"><button class="btn primary block" id="save" style="min-height:54px;font-size:17px"></button><div id="probs" class="small neg" style="text-align:center;margin-top:6px;min-height:20px" aria-live="polite"></div></div>
     `,
@@ -686,7 +687,7 @@ function viewAdd(editId) {
         if (!draft.text && !editing && !Q.get('scan') && matchMedia('(hover:hover)').matches) ta.focus();
       }
       $('#file', v)?.addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) scanFile(f); });
-      if (Q.get('scan') && !draft.scanned) { draft.scanned = 1; setTimeout(() => $('#file')?.click(), 50); }
+      if (Q.get('scan') && !draft.scanned) { draft.scanned = 1; setTimeout(() => (Q.get('scan') === 'demo' ? ACT.sampleBill() : $('#file')?.click()), 50); }
       $('#save', v).onclick = (e) => saveDraft(e.currentTarget);
       if (!groups.length && !draft.gid) { draft.gid = ensureEveryday(); draft.split.parts = { [st().me]: 1 }; }
       renderPreview(); renderForm(); renderScan();
@@ -865,6 +866,7 @@ async function scanFile(file) {
   let blob;
   try { blob = await shrink(file); } catch { blob = file; }
   draft.receiptBlob = blob;
+  $('#samplehint')?.remove();
   draft.scan = { url: URL.createObjectURL(blob), stage: 'reading', p: 0 };
   renderScan();
   let last = 0;
@@ -1076,6 +1078,7 @@ const ACT = {
   addMember: (b) => { const g = st().groups[b.dataset.g]; if (!g.members.includes(b.dataset.id)) g.members.push(b.dataset.id); S.save(); render(); },
   speak: () => listen((t) => { draft.text = draft.text.trim() ? draft.text.trim() + ', ' + t : t; const ta = $('#smart'); if (ta) ta.value = draft.text; applyParse(); render(); }),
   scan: () => $('#file')?.click(),
+  sampleBill: async () => { const r = await fetch('assets/sample-bill.jpg'); const b = await r.blob(); scanFile(new File([b], 'sample-bill.jpg', { type: 'image/jpeg' })); },
   clearSmart: () => { const g = draft.gid; draft = { ...newDraft(g), key: draft.key }; render(); },
   multiPay: () => { draft.multiPay = !draft.multiPay; draft.touched.paid = 1; if (draft.multiPay) { const t = draftAmount(); const id = Object.keys(draft.paid)[0] || st().me; draft.paid = { [id]: t }; } else { draft.paid = { [Object.keys(draft.paid).find((k) => draft.paid[k] > 0) || st().me]: 0 }; } renderForm(); renderPreview(); },
   eqAll: () => { draftMembers().forEach((id) => (draft.split.parts[id] = 1)); draft.touched.split = 1; renderForm(); renderPreview(); },
