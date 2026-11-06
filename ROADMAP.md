@@ -4,13 +4,13 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
-5. Recurring expenses (rent, maid, Netflix) with a monthly auto-add.
 7. Shareable balance card image (PNG) for WhatsApp.
 8. Per-group currency and a "trip budget" with daily spend.
 9. Global search across all groups.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Repeating expenses: Once / Weekly / Monthly, "rent 25000 monthly" or "har mahine" by voice, missed periods added on open with ids that never double-add in live groups, month-end dates kept, Stop button, repeat marker on rows.
 - 2026-11-06 Fix by voice or text: "remove Priya", "Priya nahi", "add Amit", "Amit bhi", "actually 1500", "make it 950", "paid by Deepak instead", "actually equally", "call it team lunch", "scratch that". Pills jump to their field. Comments now push in live groups.
 - 2026-11-06 Security: escaped category output (XSS via live group), prototype-key ids blocked, categories and split modes allow-listed on server and client, per-group (60/min) and per-IP (300/min) rate limits, "Make a new live link" key rotation, persistent storage request, backup nudge, global error net.
 - 2026-11-06 Comments on expenses (synced in live groups) and a "What's new" card listing others' adds, edits, deletes and comments since you last looked.

@@ -42,7 +42,7 @@ const RENAME = new Set(['call', 'rename', 'title', 'naam']);
 const ONLY = new Set(['only', 'just', 'alone', 'solo', 'sirf', 'akela']);
 const EQUAL = new Set(['equally', 'evenly', 'equal', 'even', 'barabar']);
 const WAYS = new Set(['ways', 'way', 'people', 'persons', 'person', 'log', 'logo', 'members', 'heads', 'pax']);
-const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole', 'liye', 'do', 'multiple', 'into', 'like', 'name', 'named', 'called', 'is', 'are', 'am', 'just', 'also', 'will', 'rupaye', 'rupay', 'wala', 'wali', 'thi', 'tha', 'ka', 'mein']);
+const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole', 'monthly', 'weekly', 'every', 'month', 'week', 'har', 'mahine', 'mahina', 'hafte', 'liye', 'do', 'multiple', 'into', 'like', 'name', 'named', 'called', 'is', 'are', 'am', 'just', 'also', 'will', 'rupaye', 'rupay', 'wala', 'wali', 'thi', 'tha', 'ka', 'mein']);
 // "800 eaten by her", "Priya had 300": consumption verbs mark what someone owes.
 const CONSUME = new Set(['eaten', 'ate', 'eat', 'had', 'consumed', 'used', 'ordered', 'took', 'khaya', 'khaaya', 'khayi', 'piya', 'liya', 'li']);
 // Pronouns point at the last other person named: "500 by her", "usne 300 diye".
@@ -508,8 +508,11 @@ export function parseExpense(text, ctx) {
       split: (d.amount != null && owedSum !== d.amount) || pctBad ? 'bad' : m.split ? 'ok' : 'assumed',
       when: toks.some((t) => t.t === 'date' || t.v === 'yesterday' || t.v === 'kal' || DAYS.includes(t.v)) ? 'ok' : null,
     };
+    // "monthly", "every month", "har mahine", "weekly", "har hafte"
+    const low = ' ' + (text || '').toLowerCase() + ' ';
+    const repeat = /\b(monthly|every month|each month|per month|har mahin[ae]|mahine ka|har month)\b/.test(low) ? 'month' : /\b(weekly|every week|each week|har hafte|har week)\b/.test(low) ? 'week' : null;
     const { meta, ...rest } = d;
-    return { ...rest, desc: d.desc || fallback, category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings, slots };
+    return { ...rest, desc: d.desc || fallback, category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings, slots, repeat };
   }
 }
 

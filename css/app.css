@@ -267,3 +267,4 @@ textarea.input { resize: none; min-height: 84px; line-height: 1.45; }
 .item-row.unread input { border-color: var(--warn); }
 .pl[role=button] { cursor: pointer; }
 .pl[role=button]:active { transform: scale(.96); }
+.row .t svg.i.sm { width: 14px; height: 14px; vertical-align: -2px; }

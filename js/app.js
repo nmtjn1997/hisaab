@@ -3,6 +3,7 @@ import { fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balan
 import { parseExpense, findPeople, assignItems, CATEGORIES } from './parse.js';
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
+import { dueRepeats, nextDate } from './repeat.js';
 import { FLAGS, loadFlagDefaults, flagDefault } from './flags.js';
 import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows } from './share.js';
 
@@ -114,7 +115,7 @@ function expenseRow(e, showGroup = false) {
   return `<a class="row" href="#/e/${e.id}">
     <div class="datebox"><b>${d.getDate()}</b><span>${MON[d.getMonth()]}</span></div>
     <span class="cat ${e.kind === 'settle' ? 'settle' : ''}">${e.kind === 'settle' ? icon('swap') : catIcon(e.category)}</span>
-    <div class="main"><div class="t">${esc(e.desc)}</div><div class="s">${esc(im.s)}${showGroup && g ? ' · ' + esc(g.name) : ''}</div></div>
+    <div class="main"><div class="t">${esc(e.desc)}${e.repeat && !e.repeat.until || e.repeatOf ? ` <span class="faint" title="Repeats">${icon('repeat', 'sm')}</span>` : ''}</div><div class="s">${esc(im.s)}${showGroup && g ? ' · ' + esc(g.name) : ''}</div></div>
     <div class="end ${im.cls}"><div class="k">${im.k}</div><div class="v">${im.v}</div></div></a>`;
 }
 function netLabel(n, settled = 'settled up') {
@@ -151,6 +152,23 @@ function needsBackup() {
   const n = Object.keys(st().expenses).length;
   const live = Object.values(st().groups).some((g) => g.live?.key && !g.deleted);
   return n >= 15 && !live && Date.now() - (st().settings.lastBackup || 0) > 30 * 864e5;
+}
+function nextAfter(e) {
+  let t = e.date;
+  for (let i = 0; i < 200 && t <= Date.now(); i++) t = nextDate(t, e.repeat.every);
+  return t;
+}
+// Add any repeating expenses that came due while the app was closed.
+function runRepeats() {
+  const due = dueRepeats(st().expenses);
+  if (!due.length) return;
+  for (const d of due) {
+    const src = st().expenses[d.src];
+    const { id: _i, repeat: _r, receiptId: _rc, text: _t, createdAt: _c, updatedAt: _u, editedBy: _e, ...copy } = src;
+    S.upsertExpense({ ...copy, id: d.id, date: d.date, repeatOf: d.src, by: src.by });
+  }
+  toast(due.length === 1 ? `Added ${st().expenses[due[0].id].desc} (repeats)` : `Added ${due.length} repeating expenses`);
+  render();
 }
 function ensureEveryday() {
   let g = S.groupList().find((x) => x.name === 'Everyday');
@@ -706,6 +724,8 @@ function viewExpense(id) {
       <h2 class="h2">${settle ? 'Paid to' : 'Split'} <span class="faint small" style="font-weight:600">${settle ? '' : esc(splitLabel(e.split))}</span></h2>
       <div class="list">${Object.entries(e.owed).map(([pid, a]) => `<a class="row" href="#/p/${pid}">${av(pid, 'sm')}<div class="main"><div class="t">${esc(S.pname(pid))}</div>${!settle && e.paid[pid] ? `<div class="s">paid ${money(e.paid[pid])}, share ${money(a)}</div>` : ''}</div><div class="end"><div class="v">${money(a)}</div></div></a>`).join('')}</div>
       ${e.items?.length ? `<h2 class="h2">Items</h2><div class="list">${e.items.map((it) => `<div class="row" style="cursor:default"><div class="main"><div class="t">${esc(it.name)}</div><div class="s">${it.who.map((w) => esc(S.firstName(w))).join(', ')}</div></div><div class="end"><div class="v">${money(it.amount)}</div></div></div>`).join('')}</div>` : ''}
+      ${e.repeat && !e.repeat.until ? `<div class="note" style="margin-top:12px;align-items:center">${icon('repeat', 'sm')}<span style="flex:1">Repeats ${e.repeat.every === 'month' ? 'every month' : 'every week'}. Next one added on ${fmtDate(nextAfter(e))}.</span><button class="btn sm" data-act="stopRepeat" data-id="${id}">Stop</button></div>` : ''}
+      ${e.repeatOf && st().expenses[e.repeatOf] ? `<a class="note" style="margin-top:12px" href="#/e/${e.repeatOf}">${icon('repeat', 'sm')} Added automatically from a repeating expense. Open the original to change or stop it.</a>` : ''}
       ${e.note ? `<h2 class="h2">Note</h2><div class="card">${esc(e.note)}</div>` : ''}
       ${commentsHTML(id)}
       ${e.receiptId ? `<h2 class="h2">Bill</h2><div id="rimg"><div class="sk" style="height:220px;border-radius:14px"></div></div>` : ''}
@@ -752,6 +772,7 @@ function checklist(m) {
   out.push(pill(S_.who === 'ok' ? 'ok' : 'as', 'Shared by', (S_.who === 'ok' ? '' : 'everyone · ') + `${owedIds.length} ${owedIds.length === 1 ? 'person' : 'people'}` + (owedIds.length <= 3 ? ` (${list(owedIds)})` : '') + (S_.who === 'ok' ? '' : '?')));
   out.push(pill(S_.split === 'ok' ? 'ok' : S_.split === 'bad' ? 'bad' : 'as', 'Split', splitText + (S_.split === 'assumed' ? '?' : '')));
   if (S_.when) out.push(pill('ok', 'When', fmtDate(m.date)));
+  if (m.repeat) out.push(pill('ok', 'Repeats', m.repeat === 'month' ? 'monthly' : 'weekly'));
   (m.newNames || []).forEach((n) => out.push(`<span class="pl new">+ ${esc(n.name)} <b>new person</b></span>`));
   const ask = S_.amount !== 'ok' ? 'How much was it? Say “1200” or “dedh hazaar”.'
     : S_.paid === 'bad' ? `Paid adds to ${money(Object.values(m.paid).reduce((a, b) => a + b, 0))} of ${money(m.amount)}. Who paid the rest?`
@@ -897,6 +918,7 @@ function applyParse() {
   if (!draft.touched.desc) draft.desc = r.desc;
   if (!draft.touched.category) draft.category = r.category;
   if (!draft.touched.date) draft.date = r.date;
+  if (!draft.touched.repeat) draft.repeat = r.repeat;
   if (!draft.touched.paid) { draft.paid = { ...r.paid }; draft.multiPay = Object.keys(r.paid).length > 1 || (r.amount != null && sumVals(r.paid) !== r.amount); if (!Object.keys(draft.paid).length) draft.paid = { [st().me]: 0 }; }
   if (!draft.touched.split && !(draft.items && draft.split.mode === 'items')) {
     draft.split = r.split.mode === 'exact' ? { mode: 'exact', parts: { ...r.split.parts } } : { mode: r.split.mode, parts: { ...r.split.parts } };
@@ -909,7 +931,7 @@ function viewAdd(editId) {
   const key = editId || 'new:' + (Q.get('g') || '') + (Q.get('q') || '') + (Q.get('scan') || '');
   if (!draft || draft.key !== key) {
     if (editing) {
-      draft = { ...newDraft(editing.gid), id: editing.id, kind: editing.kind, text: editing.text || '', desc: editing.desc, amount: String(editing.amount / 100), date: editing.date, category: editing.category, paid: { ...editing.paid }, multiPay: Object.keys(editing.paid).length > 1, split: editing.split ? JSON.parse(JSON.stringify(editing.split)) : { mode: 'exact', parts: { ...editing.owed } }, items: editing.items ? JSON.parse(JSON.stringify(editing.items)) : null, note: editing.note || '', receiptId: editing.receiptId || null, touched: { amount: 1, desc: 1, category: 1, date: 1, paid: 1, split: 1 } };
+      draft = { ...newDraft(editing.gid), repeat: editing.repeat && !editing.repeat.until ? editing.repeat.every : null, repeatOf: editing.repeatOf, id: editing.id, kind: editing.kind, text: editing.text || '', desc: editing.desc, amount: String(editing.amount / 100), date: editing.date, category: editing.category, paid: { ...editing.paid }, multiPay: Object.keys(editing.paid).length > 1, split: editing.split ? JSON.parse(JSON.stringify(editing.split)) : { mode: 'exact', parts: { ...editing.owed } }, items: editing.items ? JSON.parse(JSON.stringify(editing.items)) : null, note: editing.note || '', receiptId: editing.receiptId || null, touched: { amount: 1, desc: 1, category: 1, date: 1, paid: 1, split: 1 } };
     } else {
       draft = newDraft(Q.get('g'));
       if (Q.get('q')) { draft.text = Q.get('q'); applyParse(); }
@@ -956,7 +978,7 @@ function renderPreview() {
   const pv = $('#pv');
   if (!pv) return;
   if (!draft.text.trim() && !draft.scan && !draft.touched.amount) { pv.innerHTML = `<span class="faint small">Say or type who paid, how much, who shares and how: “split with”, “only me”, 70-30, 90%, “except Priya”, “Priya had 300”, “Rahul owes me 200”, yesterday, Hinglish like “maine 500 diye”.</span>`; return; }
-  const c = checklist({ jump: true, slots: draftSlots(), amount: draftAmount(), desc: draft.desc, paid: draftPaid(), owedIds: Object.keys(draftOwed()), split: draft.split, date: draft.date, newNames: draft.parsed?.newNames || [], nameOf: dname });
+  const c = checklist({ jump: true, repeat: draft.repeat, slots: draftSlots(), amount: draftAmount(), desc: draft.desc, paid: draftPaid(), owedIds: Object.keys(draftOwed()), split: draft.split, date: draft.date, newNames: draft.parsed?.newNames || [], nameOf: dname });
   pv.innerHTML = c.html + askHTML(c) + (draft.text.trim() ? `<p class="faint small" style="margin:8px 2px 0">Tap a pill to fix it, or keep talking: “remove Priya”, “actually 1500”.</p>` : '');
   $$('[data-jump]', pv).forEach((el) => (el.onclick = el.onkeydown = (e) => {
     if (e.type === 'keydown' && e.key !== 'Enter') return;
@@ -988,6 +1010,7 @@ function renderForm() {
         <select class="input" id="grp" style="flex:1.4" aria-label="Group">${draft.gid ? '' : '<option value="">Pick a group</option>'}${groups.map((g) => `<option value="${g.id}" ${g.id === draft.gid ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}<option value="__new">+ New group</option></select>
         <input class="input" type="date" id="dt" style="flex:1" value="${isoDate(draft.date)}" max="${isoDate(Date.now() + 864e5 * 365)}" aria-label="Date">
       </div>
+      ${isSettle || draft.repeatOf ? '' : `<div class="seg" style="margin-top:10px" role="tablist" aria-label="Repeat">${[[null, 'Once'], ['week', 'Weekly'], ['month', 'Monthly']].map(([k, l]) => `<button role="tab" data-rep="${k || ''}" aria-selected="${(draft.repeat || null) === k}">${k ? icon('repeat', 'sm') + ' ' : ''}${l}</button>`).join('')}</div>`}
       ${isSettle ? '' : `<div class="hints" style="padding-top:12px">${[draft.category, ...Object.keys(CATEGORIES).concat('general').filter((c) => c !== draft.category)].map((c) => `<button class="chip plain" data-cat="${c}" aria-pressed="${draft.category === c}" style="flex:none">${catIcon(c)} ${CAT_NAMES[c]}</button>`).join('')}</div>`}
     </div>
 
@@ -1040,6 +1063,7 @@ function bindForm(f) {
     if (e.target.value === '__new') { e.target.value = draft.gid || ''; newGroupSheet((gid) => { switchGroup(gid); }); return; }
     switchGroup(e.target.value);
   };
+  $$('[data-rep]', f).forEach((b) => (b.onclick = () => { draft.repeat = b.dataset.rep || null; draft.touched.repeat = 1; renderForm(); renderPreview(); }));
   $$('[data-cat]', f).forEach((b) => (b.onclick = () => { draft.category = b.dataset.cat; draft.touched.category = 1; $$('[data-cat]', f).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
   $$('[data-payer]', f).forEach((b) => (b.onclick = () => { draft.paid = { [b.dataset.payer]: 0 }; draft.touched.paid = 1; buzz(); rerender(); }));
   $$('[data-pay]', f).forEach((i) => (i.oninput = () => { draft.paid[i.dataset.pay] = toPaise(parseFloat(i.value) || 0); draft.touched.paid = 1; softUpdate(); }));
@@ -1177,7 +1201,8 @@ async function saveDraft(btn) {
     if (draft.receiptBlob) { receiptId = S.uid(); try { await S.putReceipt(receiptId, draft.receiptBlob); } catch { receiptId = null; toast('Could not store the bill photo'); } }
     const split = draft.split.mode === 'items' ? { mode: 'items', parts: {} } : { mode: draft.split.mode, parts: fix(draft.split.parts) };
     const items = draft.split.mode === 'items' && draft.items ? draft.items.map((it) => ({ ...it, who: it.who.map((w) => map[w] || w) })) : null;
-    const id = S.upsertExpense({ id: draft.id, gid: draft.gid, kind: draft.kind || 'expense', text: draft.text.trim() || undefined, desc: (draft.desc || CAT_NAMES[draft.category] || 'Expense').trim().slice(0, 80), amount: total, date: draft.date, category: draft.kind === 'settle' ? 'settle' : draft.category, paid, owed, split, items, note: draft.note.trim(), receiptId });
+    const id = S.upsertExpense({ id: draft.id, gid: draft.gid, kind: draft.kind || 'expense', text: draft.text.trim() || undefined, desc: (draft.desc || CAT_NAMES[draft.category] || 'Expense').trim().slice(0, 80), amount: total, date: draft.date, category: draft.kind === 'settle' ? 'settle' : draft.category, paid, owed, split, items, note: draft.note.trim(), receiptId, ...(draft.repeatOf ? {} : { repeat: draft.repeat ? { every: draft.repeat } : null }) });
+    if (draft.repeat) setTimeout(runRepeats, 50);
     S.flush();
     buzz();
     const wasEdit = !!draft.id;
@@ -1564,6 +1589,7 @@ const ACT = {
     });
   },
   print: () => print(),
+  stopRepeat: (b) => { const e = st().expenses[b.dataset.id]; S.upsertExpense({ id: e.id, repeat: { ...e.repeat, until: Date.now() } }); toast('Stopped repeating'); render(); },
   delComment: (b) => { S.deleteComment(b.dataset.id); render(); },
   seenGroup: (b) => { st().groups[b.dataset.g].seenAt = Date.now(); S.save(); render(); },
   resetFlags: () => { delete st().settings.flags; S.save(); render(); },
@@ -1595,7 +1621,8 @@ document.addEventListener('click', (e) => {
 
 // ---------- boot ----------
 applyTheme();
-loadFlagDefaults().then(render);
+loadFlagDefaults().then(() => { render(); if (st().me) runRepeats(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && st().me) runRepeats(); });
 // Ask the browser not to evict local data under storage pressure (local-first means this is the only copy).
 S.onChange(() => { if (!st().settings.persistAsked && navigator.storage?.persist) { st().settings.persistAsked = true; navigator.storage.persist().catch(() => {}); } });
 let errShown = 0;

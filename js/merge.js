@@ -30,6 +30,8 @@ function cleanExpense(e) {
     note: str(e.note, 200),
     text: e.text ? str(e.text, 300) : undefined,
     deleted: !!e.deleted,
+    repeat: e.repeat && (e.repeat.every === 'month' || e.repeat.every === 'week') ? { every: e.repeat.every, until: e.repeat.until ? int(e.repeat.until) : undefined } : null,
+    repeatOf: ID.test(e.repeatOf || '') ? e.repeatOf : undefined,
     by: ID.test(e.by || '') ? e.by : undefined,
     editedBy: ID.test(e.editedBy || '') ? e.editedBy : undefined,
     createdAt: int(e.createdAt),

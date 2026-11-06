@@ -335,3 +335,28 @@ t('clean: blocks prototype keys and unknown categories', () => {
   assert.deepEqual(c.expenses.e1.paid, { a: 2 });
   assert.equal({}.polluted, undefined);
 });
+
+import { nextDate, dueRepeats } from '../js/repeat.js';
+t('repeat: month end clamps and keeps the day', () => {
+  const jan31 = new Date(2026, 0, 31, 12).getTime();
+  const feb = new Date(nextDate(jan31, 'month'));
+  assert.equal(feb.getMonth(), 1); assert.equal(feb.getDate(), 28);
+  assert.equal(new Date(nextDate(new Date(2026, 0, 5, 12).getTime(), 'week')).getDate(), 12);
+});
+t('repeat: due copies, deterministic ids, no duplicates', () => {
+  const start = new Date(2026, 0, 31, 12).getTime();
+  const ex = { r1: { id: 'r1', date: start, repeat: { every: 'month' } } };
+  const due = dueRepeats(ex, new Date(2026, 3, 15).getTime());
+  assert.deepEqual(due.map((d) => d.id), ['r1-20260228', 'r1-20260331']);
+  ex['r1-20260228'] = { id: 'r1-20260228', repeatOf: 'r1' };
+  assert.deepEqual(dueRepeats(ex, new Date(2026, 3, 15).getTime()).map((d) => d.id), ['r1-20260331']);
+  ex.r1.repeat.until = new Date(2026, 2, 1).getTime();
+  assert.deepEqual(dueRepeats(ex, new Date(2026, 3, 15).getTime()), []);
+});
+t('parser: monthly / weekly / har mahine', () => {
+  assert.equal(P('rent 25000 monthly').repeat, 'month');
+  assert.equal(P('maid 3000 har mahine').repeat, 'month');
+  assert.equal(P('cleaning 500 every week').repeat, 'week');
+  assert.equal(P('dinner 800').repeat, null);
+  assert.equal(P('rent 25000 every month').desc, 'Rent');
+});
