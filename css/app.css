@@ -387,3 +387,5 @@ textarea.input { resize: none; min-height: 84px; line-height: 1.45; }
 .row.hist.flagged { background: var(--neg-soft); }
 .row.hist a { color: var(--text); }
 .row.hist .pl { font-size: 12px; padding: 4px 9px 4px 7px; }
+mark { background: var(--accent-soft); color: var(--text); border-radius: 4px; padding: 0 2px; box-shadow: inset 0 -2px 0 var(--accent); }
+#sq::-webkit-search-cancel-button { filter: invert(1); opacity: .5; }

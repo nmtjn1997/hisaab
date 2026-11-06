@@ -447,3 +447,23 @@ t('budget pace: per day left and on-track', () => {
   const over = budgetStatus({ budget: 100000, spent: 150000 });
   assert.equal(over.over, true); assert.equal(over.pct, 150); assert.equal(over.daysLeft, null);
 });
+
+import { searchAll, highlight } from '../js/search.js';
+t('search: words AND, people, groups, amounts, categories', () => {
+  const state = {
+    people: { me: { id: 'me', name: 'Namit' }, d: { id: 'd', name: 'Deepak' } },
+    groups: { g1: { id: 'g1', name: 'Nainital trip' }, g2: { id: 'g2', name: 'Flat', deleted: true } },
+    expenses: {
+      a: { id: 'a', gid: 'g1', desc: 'Safari', amount: 600000, date: 3, category: 'fun', paid: { me: 600000 }, owed: { me: 300000, d: 300000 } },
+      b: { id: 'b', gid: 'g1', desc: 'Petrol', amount: 381000, date: 2, category: 'fuel', paid: { d: 381000 }, owed: { me: 190500, d: 190500 } },
+      c: { id: 'c', gid: 'g2', desc: 'Safari old', amount: 100, date: 1, paid: {}, owed: {} },
+    },
+  };
+  assert.deepEqual(searchAll(state, 'safari').expenses.map((e) => e.id), ['a']); // deleted group hidden
+  assert.deepEqual(searchAll(state, 'deepak petrol').expenses.map((e) => e.id), ['b']);
+  assert.deepEqual(searchAll(state, '3810').expenses.map((e) => e.id), ['b']);
+  assert.deepEqual(searchAll(state, 'diesel').expenses.map((e) => e.id), ['b']);
+  assert.deepEqual(searchAll(state, 'naini').groups.map((g) => g.id), ['g1']);
+  assert.deepEqual(searchAll(state, 'dee').people.map((p) => p.id), ['d']);
+  assert.equal(highlight('<b>Safari</b>', 'saf', (s) => s.replace(/</g, '&lt;')), '&lt;b><mark>Saf</mark>ari&lt;/b>');
+});

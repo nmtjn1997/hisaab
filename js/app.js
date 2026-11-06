@@ -4,6 +4,7 @@ import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseR
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
 import * as FX from './fx.js';
+import { searchAll, highlight } from './search.js';
 import { describe as describeHist, revertPatch, FLAG_TEXT } from './history.js';
 import { initTelemetry, track, reportError } from './telemetry.js';
 import { dueRepeats, nextDate } from './repeat.js';
@@ -302,6 +303,7 @@ const routes = [
   [/^\/people$/, viewPeople],
   [/^\/p\/(\w+)$/, viewPerson],
   [/^\/stats$/, viewStats],
+  [/^\/search$/, viewSearch],
   [/^\/settings$/, viewSettings],
   [/^\/import\/([\w-]+)$/, viewImport],
   [/^\/join\/([\w-]+)~([\w-]+)$/, viewJoin],
@@ -483,7 +485,7 @@ function viewHome() {
   const greet = hr < 5 ? 'Up late' : hr < 12 ? 'Morning' : hr < 17 ? 'Afternoon' : 'Evening';
   return {
     tab: 'home', title: 'Hisaab',
-    actions: `<a class="icon-btn" href="#/settings" aria-label="Settings">${icon('settings')}</a>`,
+    actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a><a class="icon-btn" href="#/settings" aria-label="Settings">${icon('settings')}</a>`,
     html: `
     <section class="hero">
       <div class="muted small" style="font-weight:600">${greet}, ${esc(name)}</div>
@@ -509,7 +511,7 @@ function viewGroups() {
   const archived = Object.values(st().groups).filter((g) => g.archived && !g.deleted);
   return {
     tab: 'groups', title: 'Groups',
-    actions: `<button class="icon-btn" data-act="newGroup" aria-label="New group">${icon('plus')}</button>`,
+    actions: `<a class="icon-btn" href="#/search" aria-label="Search">${icon('search')}</a><button class="icon-btn" data-act="newGroup" aria-label="New group">${icon('plus')}</button>`,
     html: groups.length ? `<div class="list" style="margin-top:8px">${groups.map((g) => `<a class="row" href="#/g/${g.id}"><span class="av" style="--h:${g.hue}">${esc(initials(g.name))}</span><div class="main"><div class="t">${esc(g.name)}</div><div class="s">${memberList(g.id).map((id) => esc(S.firstName(id))).join(', ')}</div></div>${netLabel(myGroupNet(g.id))}</a>`).join('')}</div>
       <button class="btn block" style="margin-top:14px" data-act="newGroup">${icon('plus', 'sm')} New group</button>
       ${archived.length ? `<h2 class="h2">Archived</h2><div class="list">${archived.map((g) => `<a class="row" href="#/g/${g.id}"><span class="av" style="--h:${g.hue};opacity:.5">${esc(initials(g.name))}</span><div class="main"><div class="t">${esc(g.name)}</div></div>${netLabel(myGroupNet(g.id))}</a>`).join('')}</div>` : ''}`
@@ -665,6 +667,46 @@ function insightsHTML(exps, { gid, mine } = {}) {
     <div class="card bars">${cats.map(([c, v]) => `<div class="bar-row"><div class="lbl"><span style="display:flex;gap:8px;align-items:center">${catIcon(c)} ${esc(CAT_NAMES[c] || c)}</span><span class="num">${money(v)} <span class="faint">${Math.round((v / total) * 100)}%</span></span></div><div class="track"><i style="width:${(v / cats[0][1]) * 100}%"></i></div></div>`).join('')}</div>
     ${people}
     <h2 class="h2">Biggest</h2><div class="list">${top.map((e) => expenseRow(e, !gid)).join('')}</div>`;
+}
+
+function viewSearch() {
+  const q = Q.get('q') || '';
+  const recent = st().settings.recentSearches || [];
+  return {
+    title: 'Search', back: '/',
+    html: `<div class="quick" style="margin-top:4px">${icon('search', 'sm')}<input id="sq" type="search" enterkeyhint="search" placeholder="Safari, Deepak, 500, petrol…" value="${esc(q)}" aria-label="Search all groups" autocomplete="off"></div>
+      <div id="sres" aria-live="polite"></div>`,
+    mount(v) {
+      const input = $('#sq', v), box = $('#sres', v);
+      const show = () => {
+        const term = input.value.trim();
+        history.replaceState(null, '', '#/search' + (term ? '?q=' + encodeURIComponent(term) : ''));
+        if (!term) {
+          box.innerHTML = recent.length ? `<h2 class="h2">Recent <button class="btn sm ghost" data-act="clearSearches">Clear</button></h2><div class="chips">${recent.map((r) => `<button class="chip plain" data-rs="${esc(r)}">${icon('search', 'sm')} ${esc(r)}</button>`).join('')}</div>`
+            : `<div class="empty"><div class="art">${icon('search', 'lg')}</div><h3>Search everything</h3><p>Expenses, groups and people across all your groups. Try a name, an amount like 500, or a word like petrol.</p></div>`;
+          box.querySelectorAll('[data-rs]').forEach((b) => (b.onclick = () => { input.value = b.dataset.rs; show(); }));
+          return;
+        }
+        const r = searchAll(st(), term);
+        const hl = (t) => highlight(t, term, esc);
+        const none = !r.people.length && !r.groups.length && !r.expenses.length;
+        box.innerHTML = none ? `<div class="empty"><div class="art">${icon('search', 'lg')}</div><h3>Nothing for “${esc(term)}”</h3><p>Try fewer words, a person's name, or an amount.</p></div>` : `
+          ${r.groups.length ? `<h2 class="h2">Groups</h2><div class="list">${r.groups.map((g) => `<a class="row" href="#/g/${g.id}"><span class="av" style="--h:${g.hue}">${esc(initials(g.name))}</span><div class="main"><div class="t">${hl(g.name)}</div><div class="s">${memberList(g.id).length} people</div></div>${netLabel(myGroupNet(g.id))}</a>`).join('')}</div>` : ''}
+          ${r.people.length ? `<h2 class="h2">People</h2><div class="list">${r.people.map((p) => `<a class="row" href="#/p/${p.id}">${av(p.id)}<div class="main"><div class="t">${hl(p.name)}${p.id === st().me ? ' <span class="faint small">(you)</span>' : ''}</div></div></a>`).join('')}</div>` : ''}
+          ${r.expenses.length ? `<h2 class="h2">Expenses <span class="faint small">${r.total > r.expenses.length ? `${r.expenses.length} of ${r.total}` : r.total}</span></h2><div class="list">${r.expenses.map((e) => expenseRow(e, true).replace(`<div class="t">${esc(e.desc)}`, `<div class="t">${hl(e.desc)}`)).join('')}</div>` : ''}`;
+      };
+      let t;
+      input.oninput = () => { clearTimeout(t); t = setTimeout(show, 120); };
+      input.onkeydown = (e) => {
+        if (e.key !== 'Enter') return;
+        const term = input.value.trim();
+        if (term) { st().settings.recentSearches = [term, ...recent.filter((r) => r !== term)].slice(0, 8); S.save(); }
+        input.blur();
+      };
+      show();
+      if (!q) setTimeout(() => input.focus(), 60);
+    },
+  };
 }
 
 function viewStats() {
@@ -1828,6 +1870,7 @@ const ACT = {
     });
   },
   print: () => print(),
+  clearSearches: () => { st().settings.recentSearches = []; S.save(); render(); },
   undoHist: (b) => {
     const e = st().expenses[b.dataset.eid];
     if (!e) return;

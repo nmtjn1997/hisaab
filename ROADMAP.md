@@ -5,10 +5,10 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 ## Next
 - End-to-end encryption for live groups (needs a decision: the server could no longer write tamper-proof edit history, since it cannot read changes; would move to signed client-side history).
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
-9. Global search across all groups.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Search everything: expenses, groups and people across all groups; all words must match; amounts (500, 3.8k), people in a bill, categories (diesel finds petrol), bill items; highlighted matches; recent searches; from Home and Groups.
 - 2026-11-06 Per-group currency (14 options) and trip budget with dates: progress bar, amount left, per-day allowance and pace colour; synced in live groups; home shows other-currency balances separately so totals never mix currencies.
 - 2026-11-06 Live groups hardened with a multi-phone simulator (tests/sim, worker threads running the real app code against the live server): fixed edits lost while a sync was running, edits lost on phones with slow clocks (row fingerprint instead of newest time), split-brain on exact timestamp ties (one total order on server and phones), and idle re-sends eating the write budget. Server-written edit history with device ids, flags for lowered amounts, self-removal, own share lowered, removals and deletes, Undo from history, group History tab, invite prompt after creating a group, 8s live refresh. Nainital trip replayed from 2 phones: Jeeju pays Namit 6,860, identical on both.
 - 2026-11-06 Admin monitoring: anonymous usage events (install id, screens with ids stripped, feature counts), crash reports, sync timing per hashed group, D1 storage with 90-day cleanup, Workers Logs on; admin.html dashboard with KPIs, daily users, actions, sync volume and speed, crashes, retention, features, screens, devices, versions, live groups and live logs, behind a bearer token. Settings switch to turn stats off.
