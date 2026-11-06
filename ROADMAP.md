@@ -4,12 +4,12 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
-7. Shareable balance card image (PNG) for WhatsApp.
 8. Per-group currency and a "trip budget" with daily spend.
 9. Global search across all groups.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Balance card image: 1080x1350 PNG drawn on canvas (title, total, who pays whom with UPI, per-person balances), shared through the phone's share sheet or saved; group header wraps cleanly on narrow phones.
 - 2026-11-06 Parser fixes from a real phone test: "shared by / split by / used by" mean who owes (not who paid), "both of us" / "hum dono" / "dono" mean the two people named (never a new person called Both), "paid by us" spreads over members (no Unknown payer). Add screen never defaults to a deleted or archived group.
 - 2026-11-06 Motion: native page transitions with a sliding nav pill, tap ripples and spring presses, smart box grows and glows on focus with auto-height, pills pop green or shake red, count-up balances, cascading rows, confetti on add and settle, mic rings and waveform, theme switch circle reveal; all off under reduced motion.
 - 2026-11-06 Fix misheard names: "People I heard" chips (Dipak -> Deepak, Hemi -> new person), tap to pick the right person or type the name, or say "rename Hemi to Himi" / "not Hemi, it's Himi" / "Hemi nahi Himi hai". Typing previews live and applies after a 2s pause, on leaving the box, on Enter, or with Apply.

@@ -559,7 +559,7 @@ function viewGroup(gid, tab = 'expenses') {
     tab: 'groups', title: g.name, back: '/groups',
     actions: `<button class="icon-btn" data-act="shareGroup" data-g="${gid}" aria-label="Share">${icon('share')}</button><button class="icon-btn" data-act="groupMenu" data-g="${gid}" aria-label="Group options">${icon('more')}</button>`,
     html: `${g.sample ? `<div class="note" style="margin:4px 0 12px;align-items:center">${icon('sparkle', 'sm')}<span style="flex:1">Sample trip to look around. Delete it when you are ready.</span><button class="btn sm" data-act="delSample" data-g="${gid}">Delete</button></div>` : ''}<section class="hero" style="padding:16px 18px">
-        <div style="display:flex;align-items:center;gap:12px"><span class="av lg" style="--h:${g.hue}">${esc(initials(g.name))}</span><div style="flex:1;min-width:0"><div class="small muted" style="font-weight:600">${myNet > 0 ? 'You get back' : myNet < 0 ? 'You owe' : 'You are'}</div><div style="font:800 28px var(--display);letter-spacing:-.02em" class="${myNet > 0 ? 'pos' : myNet < 0 ? 'neg' : ''} num">${myNet ? `<span data-count="${Math.abs(myNet)}">${money(Math.abs(myNet))}</span>` : 'settled up'}</div></div><div style="text-align:right"><div class="small muted" style="font-weight:600">Total spend</div><div style="font:700 17px var(--display)" class="num">${money(total)}</div></div></div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="av lg" style="--h:${g.hue}">${esc(initials(g.name))}</span><div style="flex:1;min-width:140px"><div class="small muted" style="font-weight:600">${myNet > 0 ? 'You get back' : myNet < 0 ? 'You owe' : 'You are'}</div><div style="font:800 28px var(--display);letter-spacing:-.02em" class="${myNet > 0 ? 'pos' : myNet < 0 ? 'neg' : ''} num">${myNet ? `<span data-count="${Math.abs(myNet)}">${money(Math.abs(myNet))}</span>` : 'settled up'}</div></div><div style="text-align:right;margin-left:auto"><div class="small muted" style="font-weight:600;white-space:nowrap">Total spend</div><div style="font:700 17px var(--display)" class="num">${money(total)}</div></div></div>
         ${g.live?.key ? `<div style="margin-top:12px;display:flex;gap:8px;align-items:center"><span class="tag a" id="livechip">${g.live.error ? esc(g.live.error) : 'Live'}</span><span class="faint small">Everyone with the link sees changes</span></div>` : ''}
       </section>
       <nav class="seg" style="margin-top:14px" aria-label="Group sections">${tabs.map(([k, l]) => `<a href="#/g/${gid}${k === 'expenses' ? '' : '/' + k}" ${tab === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
@@ -1535,6 +1535,33 @@ async function pickContacts() {
   return list.map((c) => ({ name: String(c.name?.[0] || '').trim().slice(0, 40), phone: String(c.tel?.[0] || '').replace(/[^\d+]/g, '').slice(-13) })).filter((c) => c.name);
 }
 
+// Balance card PNG: native share sheet with the image where supported, otherwise a download.
+async function shareCard(gid) {
+  const { balanceCard } = await import('./card.js');
+  const g = st().groups[gid];
+  const real = S.groupExpenses(gid).filter((e) => e.kind !== 'settle');
+  const b = S.groupBalances(gid);
+  const dates = real.map((e) => e.date);
+  const blob = await balanceCard({
+    title: g.name,
+    subtitle: `${real.length} expense${real.length === 1 ? '' : 's'} · ${memberList(gid).length} people${dates.length ? ` · ${fmtDate(Math.min(...dates))} to ${fmtDate(Math.max(...dates))}` : ''}`,
+    total: money(real.reduce((a, e) => a + e.amount, 0)),
+    rows: transfersFor(gid).map((t) => ({ from: S.pname(t.from, false), to: S.pname(t.to, false), amount: money(t.amount), upi: S.person(t.to).upi || '' })),
+    people: memberList(gid).map((id) => ({ name: S.pname(id, false), net: b[id] ? (b[id] > 0 ? '+' : '-') + money(Math.abs(b[id])) : 'settled', sign: Math.sign(b[id] || 0) })),
+    footer: `Made with Hisaab · ${location.host}`,
+  });
+  const file = new File([blob], `${g.name.replace(/[^\w-]+/g, '-').slice(0, 40) || 'hisaab'}-balances.png`, { type: 'image/png' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: g.name, text: `${g.name} balances` }); return; } catch (x) { if (x.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  toast('Image saved. Send it from your gallery.');
+}
+
 // ---------- actions ----------
 async function shareText(text, url) {
   if (navigator.share) { try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
@@ -1650,6 +1677,7 @@ const ACT = {
         ${flag('liveGroups') ? '' : '<template>'}<button class="row" data-s="live">${icon('users')}<div class="main"><div class="t">${st().groups[gid].live?.key ? 'Send the live link' : 'Make it live and share'}</div><div class="s">Friends open it, add expenses, everyone stays in sync</div></div></button>
         ${flag('liveGroups') ? '' : '</template>'}${flag('whatsapp') ? '' : '<template>'}<button class="row" data-s="wa">${icon('whatsapp')}<div class="main"><div class="t">WhatsApp summary</div><div class="s">Who pays whom, as a message</div></div></button>
         ${flag('whatsapp') ? '' : '</template>'}<button class="row" data-s="link">${icon('link')}<div class="main"><div class="t">Share a copy of this group</div><div class="s">Others open the link and get every expense</div></div></button>
+        <button class="row" data-s="img">${icon('share')}<div class="main"><div class="t">Balance card image</div><div class="s">A picture of who pays whom, best for WhatsApp</div></div></button>
         <button class="row" data-s="pdf">${icon('file')}<div class="main"><div class="t">PDF report</div><div class="s">Balances, per person totals, all expenses</div></div></button>
       </div>`, (el, close) => {
       (el.querySelector('[data-s=live]') || {}).onclick = (e) => busy(e.currentTarget, async () => {
@@ -1662,6 +1690,7 @@ const ACT = {
         if (navigator.share) { try { await navigator.share({ title: g.name, text, url }); return; } catch (x) { if (x.name === 'AbortError') return; } }
         open(waLink(text + '\n' + url), '_blank', 'noopener');
       });
+      el.querySelector('[data-s=img]').onclick = (e) => busy(e.currentTarget, async () => { await shareCard(gid); close(); });
       (el.querySelector('[data-s=wa]') || {}).onclick = () => { close(); const real = S.groupExpenses(gid).filter((e) => e.kind !== 'settle'); shareText(groupSummaryText({ group: st().groups[gid], transfers: transfersFor(gid), totals: { total: real.reduce((s, e) => s + e.amount, 0) }, name: (id) => S.pname(id, false), cur: cur() })); };
       el.querySelector('[data-s=link]').onclick = (e) => busy(e.currentTarget, async () => {
         const url = await groupLink(gid);
