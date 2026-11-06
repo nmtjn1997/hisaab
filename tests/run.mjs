@@ -396,3 +396,11 @@ t('shared by / split by / used by are who owes, not who paid', () => {
   assert.deepEqual(Object.keys(d.owed), ['rah', 'pri']);
   assert.deepEqual(P('paid by us, dinner 800').paid, { me: 20000, dee: 20000, rah: 20000, pri: 20000 });
 });
+
+import { routeOf } from '../js/telemetry.js';
+t('telemetry routes never carry ids or keys', () => {
+  assert.equal(routeOf('/g/abc123/balances'), '/g/:id/balances');
+  assert.equal(routeOf('/join/grp1~SECRETKEY?as=x'), '/join/:id');
+  assert.equal(routeOf('/add?q=dinner 500 with Priya'), '/add');
+  assert.equal(routeOf('/e/xyz'), '/e/:id');
+});

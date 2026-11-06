@@ -3,12 +3,14 @@
 Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
+- End-to-end encryption for live groups: each phone encrypts every expense with a key derived from the link, the server merges sealed records by updatedAt and can never read names or amounts.
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
 8. Per-group currency and a "trip budget" with daily spend.
 9. Global search across all groups.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Admin monitoring: anonymous usage events (install id, screens with ids stripped, feature counts), crash reports, sync timing per hashed group, D1 storage with 90-day cleanup, Workers Logs on; admin.html dashboard with KPIs, daily users, actions, sync volume and speed, crashes, retention, features, screens, devices, versions, live groups and live logs, behind a bearer token. Settings switch to turn stats off.
 - 2026-11-06 Balance card image: 1080x1350 PNG drawn on canvas (title, total, who pays whom with UPI, per-person balances), shared through the phone's share sheet or saved; group header wraps cleanly on narrow phones.
 - 2026-11-06 Parser fixes from a real phone test: "shared by / split by / used by" mean who owes (not who paid), "both of us" / "hum dono" / "dono" mean the two people named (never a new person called Both), "paid by us" spreads over members (no Unknown payer). Add screen never defaults to a deleted or archived group.
 - 2026-11-06 Motion: native page transitions with a sliding nav pill, tap ripples and spring presses, smart box grows and glows on focus with auto-height, pills pop green or shake red, count-up balances, cascading rows, confetti on add and settle, mic rings and waveform, theme switch circle reveal; all off under reduced motion.

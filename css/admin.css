@@ -1,0 +1,50 @@
+/* Admin dashboard. Reuses app tokens; adds a validated categorical set for multi-series charts. */
+:root {
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9;
+  --critical: #ff6b6b; --grid: #232733; --axis: #6b7282;
+}
+body { background: var(--bg); }
+.adm { max-width: 1240px; margin: 0 auto; padding: 18px 16px 60px; }
+.adm-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; position: sticky; top: 0; z-index: 10; padding: 12px 0; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.adm-top h1 { font: 800 22px var(--display); margin: 0; flex: 1; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+.adm-top .seg { flex: none; }
+.adm .muted.small { white-space: nowrap; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 8px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
+.kpi .l { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.kpi .v { font: 800 28px var(--display); letter-spacing: -.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi .d { font-size: 12px; color: var(--faint); margin-top: 2px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; margin-top: 14px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; min-width: 0; }
+.panel h2 { font: 700 16px var(--display); margin: 0 0 2px; }
+.panel .sub { font-size: 12px; color: var(--faint); margin-bottom: 10px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart .gl { stroke: var(--grid); stroke-width: 1; }
+.chart .ax { fill: var(--axis); font: 500 11px var(--font); }
+.chart .hit { fill: transparent; cursor: crosshair; }
+.chart .xh { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; box-shadow: var(--shadow); white-space: nowrap; z-index: 5; transform: translate(-50%, calc(-100% - 10px)); }
+.tip b { font-weight: 700; }
+.tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.t th { text-align: left; font-weight: 600; color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); }
+table.t td { padding: 7px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; vertical-align: top; }
+table.t td.n, table.t th.n { text-align: right; }
+table.t tr:hover td { background: var(--surface-2); }
+.scroll { max-height: 360px; overflow: auto; }
+.bar-cell { position: relative; }
+.bar-cell span { position: relative; z-index: 1; }
+.bar-cell i { position: absolute; left: 0; top: 4px; bottom: 4px; background: var(--accent-soft); border-radius: 4px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.err-msg { color: var(--neg); max-width: 520px; white-space: pre-wrap; word-break: break-word; }
+.tag-st { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
+.tag-st::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.ok-c { color: var(--pos); } .bad-c { color: var(--critical); }
+.login { max-width: 380px; margin: 14vh auto; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); box-shadow: 0 0 0 0 rgba(61, 220, 151, .6); animation: livePulse 2s infinite; }
+@keyframes livePulse { 70% { box-shadow: 0 0 0 8px rgba(61, 220, 151, 0); } }
+.note-priv { font-size: 12px; color: var(--faint); margin-top: 18px; }
+@media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } .kpi .v { font-size: 24px; } }

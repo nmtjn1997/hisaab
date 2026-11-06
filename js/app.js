@@ -4,6 +4,7 @@ import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseR
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
 import * as FX from './fx.js';
+import { initTelemetry, track, reportError } from './telemetry.js';
 import { dueRepeats, nextDate } from './repeat.js';
 import { FLAGS, loadFlagDefaults, flagDefault } from './flags.js';
 import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows } from './share.js';
@@ -192,9 +193,11 @@ function listen(onText, gid, opts = {}) {
   let finals = '', interim = '', cancelled = false, finished = false, stopping = false, timer = null, r = null;
   const started = Date.now();
   const text = () => (finals + ' ' + interim).replace(/\s+/g, ' ').trim();
+  track('voice_start');
   const end = () => {
     if (finished) return;
     finished = true; clearTimeout(timer);
+    track(cancelled || !text() ? 'voice_cancel' : 'voice_done');
     try { r?.abort(); } catch {}
     ov.remove();
     if (!cancelled && text()) onText(text());
@@ -321,6 +324,7 @@ async function render() {
     if (!document.startViewTransition) { view.classList.remove('view-enter'); void view.offsetWidth; view.classList.add('view-enter'); }
     scrollTo(0, 0);
   }
+  if (path !== current) track('view', path);
   current = path;
   v.mount?.(view);
   if (changed) FX.stagger(view);
@@ -1288,6 +1292,7 @@ async function scanFile(file) {
     if (!draft.touched.desc) draft.desc = draft.desc || (r.merchant ? r.merchant.replace(/\b\w+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase()) : 'Bill');
     if (r.date && !draft.touched.date) { draft.date = r.date; draft.touched.date = 1; }
     draft.split = r.items.length ? { mode: 'items', parts: {} } : draft.split;
+    track(r.items.length ? 'scan_ok' : 'scan_empty');
     draft.scan = { ...draft.scan, stage: 'done', count: r.items.filter((i) => !i.unread).length, total: r.total, totalRead: r.totalRead, diff: r.diff, date: r.date, extras: r.extraSum, unread: r.unread };
     if (!r.items.length) draft.scan = { ...draft.scan, stage: 'error', err: 'Could not read items. Enter the total above and split normally.' };
   } catch (e) {
@@ -1318,6 +1323,7 @@ async function saveDraft(btn) {
     S.flush();
     buzz();
     const wasEdit = !!draft.id;
+    if (!wasEdit) { track('expense_add'); track(draft.kind === 'settle' ? 'settle' : draft.items ? 'add_by_scan' : draft.text.trim() ? 'add_by_text' : 'add_by_form'); if (draft.repeat) track('repeat_set'); }
     if (!wasEdit) { const r = btn.getBoundingClientRect(); FX.burst(r.left + r.width / 2, r.top); }
     const gid = draft.gid;
     draft = null;
@@ -1436,6 +1442,7 @@ async function viewJoin(gid, key) {
         S.flush();
         go('/g/' + gid);
         toast(`Joined ${d.name}`);
+        track('join');
       });
     },
   };
@@ -1542,6 +1549,7 @@ async function shareCard(gid) {
   const real = S.groupExpenses(gid).filter((e) => e.kind !== 'settle');
   const b = S.groupBalances(gid);
   const dates = real.map((e) => e.date);
+  track('share_card');
   const blob = await balanceCard({
     title: g.name,
     subtitle: `${real.length} expense${real.length === 1 ? '' : 's'} · ${memberList(gid).length} people${dates.length ? ` · ${fmtDate(Math.min(...dates))} to ${fmtDate(Math.max(...dates))}` : ''}`,
@@ -1572,6 +1580,7 @@ async function groupLink(gid) {
   return `${location.origin}${location.pathname}#/import/${code}`;
 }
 function recordSettle(gid, from, to, amount, desc = 'Settlement') {
+  track('settle');
   return S.upsertExpense({ gid, kind: 'settle', desc, amount, date: Date.now(), category: 'settle', paid: { [from]: amount }, owed: { [to]: amount }, split: { mode: 'exact', parts: { [to]: amount } } });
 }
 
@@ -1682,7 +1691,9 @@ const ACT = {
       </div>`, (el, close) => {
       (el.querySelector('[data-s=live]') || {}).onclick = (e) => busy(e.currentTarget, async () => {
         const g = st().groups[gid];
+        const wasLive = !!st().groups[gid].live?.key;
         await goLive(gid);
+        if (!wasLive) track('live_create');
         close();
         render();
         const url = Sync.liveLink(gid);
@@ -1699,7 +1710,7 @@ const ACT = {
         if (navigator.share) { try { await navigator.share({ title: st().groups[gid].name, text: `${st().groups[gid].name} on Hisaab`, url }); return; } catch (x) { if (x.name === 'AbortError') return; } }
         try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { prompt('Copy this link', url); }
       });
-      el.querySelector('[data-s=pdf]').onclick = () => { close(); go(`/g/${gid}/report`); };
+      el.querySelector('[data-s=pdf]').onclick = () => { track('share_pdf'); close(); go(`/g/${gid}/report`); };
     });
   },
   inviteGroup: (b) => ACT.shareGroup(b),
@@ -1766,12 +1777,14 @@ document.addEventListener('click', (e) => {
 // ---------- boot ----------
 applyTheme();
 FX.initRipple();
+initTelemetry(() => flag('telemetry'));
+track('open');
 loadFlagDefaults().then(() => { render(); if (st().me) runRepeats(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && st().me) runRepeats(); });
 // Ask the browser not to evict local data under storage pressure (local-first means this is the only copy).
 S.onChange(() => { if (!st().settings.persistAsked && navigator.storage?.persist) { st().settings.persistAsked = true; navigator.storage.persist().catch(() => {}); } });
 let errShown = 0;
-const onErr = (e) => { console.error(e); if (Date.now() - errShown > 10000) { errShown = Date.now(); toast('Something went wrong. Your data is safe; try again.'); } };
+const onErr = (e) => { console.error(e); reportError(e, current); if (Date.now() - errShown > 10000) { errShown = Date.now(); toast('Something went wrong. Your data is safe; try again.'); } };
 addEventListener('error', (e) => onErr(e.error || e.message));
 addEventListener('unhandledrejection', (e) => onErr(e.reason));
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

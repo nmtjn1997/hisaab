@@ -18,3 +18,15 @@ namespace_id = "1001"
   [ratelimits.simple]
   limit = 300
   period = 60
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hisaab-metrics"
+database_id = "1b8216c9-e00f-4d07-861e-120d696da114"
+
+# Drop metrics older than 90 days, daily at 03:17 UTC
+[triggers]
+crons = ["17 3 * * *"]
+
+[observability]
+enabled = true

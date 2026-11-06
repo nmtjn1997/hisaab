@@ -12,6 +12,7 @@ export const FLAGS = {
   sampleData: ['Sample trip', 'Offer a sample group to explore'],
   splitwiseImport: ['Splitwise import', 'Import a Splitwise CSV export'],
   haptics: ['Vibration', 'Small vibration on taps'],
+  telemetry: ['Share anonymous usage stats', 'Screens opened, features used and crash reports. Never names, amounts or bills'],
 };
 let defaults = Object.fromEntries(Object.keys(FLAGS).map((k) => [k, true]));
 export async function loadFlagDefaults() {

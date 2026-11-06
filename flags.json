@@ -9,5 +9,6 @@
   "hints": true,
   "sampleData": true,
   "splitwiseImport": true,
-  "haptics": true
+  "haptics": true,
+  "telemetry": true
 }
