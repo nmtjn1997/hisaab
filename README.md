@@ -2,7 +2,7 @@
 
 Split bills with friends by typing or speaking a sentence. Free, no sign-up, works offline, data stays on your phone.
 
-**Live:** https://nmtjn1997.github.io/hisaab/
+**Live:** https://gethisaab.pages.dev/ (also https://nmtjn1997.github.io/hisaab/)
 
 > “Petrol 100, I paid 70 Deepak paid 30, split 50-50”
 > “Dinner 1200 paid by Rahul, everyone except Priya”

@@ -3,11 +3,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import { cleanGroup, mergeGroup } from '../js/merge.js';
 
-const ORIGINS = [/^https:\/\/([\w-]+\.)?hisaab-s4u\.pages\.dev$/, /^https:\/\/nmtjn1997\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1):\d+$/];
+const ORIGINS = [/^https:\/\/([\w-]+\.)?(hisaab-s4u|gethisaab)\.pages\.dev$/, /^https:\/\/nmtjn1997\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1):\d+$/];
 const MAX_BODY = 2_000_000;
 
 const cors = (origin) => ({
-  'Access-Control-Allow-Origin': ORIGINS.some((r) => r.test(origin || '')) ? origin : 'https://hisaab-s4u.pages.dev',
+  'Access-Control-Allow-Origin': ORIGINS.some((r) => r.test(origin || '')) ? origin : 'https://gethisaab.pages.dev',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-Key, X-New-Key',
   'Access-Control-Max-Age': '86400',

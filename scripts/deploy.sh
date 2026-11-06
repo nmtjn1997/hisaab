@@ -12,5 +12,5 @@ GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | 
 out=$(mktemp -d)
 (cd worker && wrangler deploy 2>&1 | grep -E 'Deployed|error' || true)
 rsync -a --exclude worker --exclude .git --exclude .claude --exclude tests --exclude scripts --exclude package.json ./ "$out/"
-wrangler pages deploy "$out" --project-name hisaab --branch main --commit-dirty=true 2>&1 | tail -1
+for proj in gethisaab hisaab; do wrangler pages deploy "$out" --project-name $proj --branch main --commit-dirty=true 2>&1 | tail -1; done
 rm -rf "$out"
