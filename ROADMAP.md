@@ -12,6 +12,9 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Live checklist: every field reports said / assumed / missing / does not add up, shown as green, yellow and red pills with one next question, in the mic overlay and the text box. Mic stops faster when everything is said, waits when the amount is missing, and has a who-had-what mode for scanned bills.
+- 2026-11-06 Parser: Hindi amounts (do hazaar paanch sau, dedh sau, saade teen hazaar), sound-alike names for speech (Dipak, Himmy, Pria, Nameet).
+- 2026-11-06 Bill scan: greyscale + contrast stretch + upscale, PSM 4, digit fixes (O/l/S/B, 420,00), shop name and date, Sub Total as truth (dropped line becomes a placeholder), tax from Grand Total minus Sub Total, reconcile pills.
 - 2026-11-06 Live groups: Cloudflare Worker + Durable Object (strongly consistent, server-side merge, SHA-256 of the key only), per-group identity mapping, auto push after edits, 15s pull while open, invite links per person (?as=), Android contact picker.
 - 2026-11-06 Feature flags: flags.json defaults plus per-phone toggles in Settings.
 - 2026-11-06 Voice keeps listening through pauses: stops ~2.5s after the last word once an amount is heard, waits ~6.5s while it is missing, Done stops at once, live preview while speaking.

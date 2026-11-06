@@ -1,7 +1,7 @@
 // Rule-based parser for "Dinner 800 paid by Deepak split with me and Rahul".
 // No AI: a tokenizer plus a small state machine. Every guess is shown back to the
 // user as an editable preview, so the parser only has to be right most of the time.
-import { allocate } from './money.js';
+import { allocate, computeOwed } from './money.js';
 
 const ONES = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
 const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
@@ -66,9 +66,36 @@ function lev1(a, b) {
   return d + (a.length - i) + (b.length - j) <= 1;
 }
 
+// Hindi amounts as people say them: "do hazaar paanch sau", "dedh sau", "saade teen hazaar".
+const HN = { ek: 1, do: 2, teen: 3, tin: 3, char: 4, chaar: 4, paanch: 5, panch: 5, chhe: 6, che: 6, chah: 6, saat: 7, sat: 7, aath: 8, ath: 8, nau: 9, das: 10, gyarah: 11, barah: 12, pandrah: 15, bees: 20, pachees: 25, tees: 30, chalees: 40, pachaas: 50, pachas: 50 };
+const HMULT = { sau: 100, so: 100, hazaar: 1000, hazar: 1000, hajar: 1000, hajaar: 1000, lakh: 100000 };
+export function hindiNumbers(s) {
+  const w = s.split(/(\s+)/);
+  const out = [];
+  for (let i = 0; i < w.length; ) {
+    let total = 0, j = i, used = false;
+    for (;;) {
+      let k = j, frac = 0, base = null;
+      if (w[k] === 'saade' || w[k] === 'sade') { frac = 0.5; k += 2; }
+      if (w[k] === 'dedh' || w[k] === 'dedth') base = 1.5;
+      else if (w[k] === 'dhai' || w[k] === 'dhaai' || w[k] === 'adhai') base = 2.5;
+      else if (w[k] in HN) base = HN[w[k]] + frac;
+      else if (/^\d+(\.\d+)?$/.test(w[k] || '')) base = parseFloat(w[k]) + frac;
+      if (base == null || !(w[k + 2] in HMULT)) break;
+      total += base * HMULT[w[k + 2]];
+      used = true;
+      j = k + 4; // skip number, space, multiplier, space
+    }
+    if (used) { out.push(String(Math.round(total)) + ' '); i = j; }
+    else { out.push(w[i]); i++; }
+  }
+  return out.join('');
+}
+
 function normalize(text) {
   let s = ' ' + text.toLowerCase().replace(/[₹]/g, ' ').replace(/\b(rs|inr)\.?(?=\s*\d)/g, ' ') + ' ';
   s = s.replace(/\bfifty[\s-]fifty\b|\bhalf[\s-](and[\s-])?half\b/g, ' 50-50 ');
+  s = hindiNumbers(s);
   s = wordsToNumbers(s);
   s = s.replace(/(\d),(\d{2,3})/g, '$1$2').replace(/(\d),(\d{3})/g, '$1$2');
   s = s.replace(/(\d+(?:\.\d+)?)\s*(k|thousand)\b/g, (_, n) => String(Math.round(parseFloat(n) * 1000)));
@@ -98,6 +125,14 @@ function tokenize(norm, orig) {
   return out;
 }
 
+// Sound-alike key for Indian names so speech output still matches: Dipak/Deepak, Himmy/Himi/Hemi, Nameet/Namit.
+export function phon(x) {
+  return String(x).toLowerCase().replace(/[^a-z]/g, '')
+    .replace(/ph/g, 'f').replace(/sh/g, 's').replace(/([kgtdbcj])h/g, '$1').replace(/ck/g, 'k').replace(/q/g, 'k').replace(/w/g, 'v').replace(/z/g, 'j')
+    .replace(/ee|ea|ie|ey|y/g, 'i').replace(/oo|ou/g, 'u').replace(/aa/g, 'a').replace(/e/g, 'i')
+    .replace(/(.)\1+/g, '$1').replace(/h$/, '').replace(/(.{3,})a$/, '$1');
+}
+
 function makeResolver(people, meId) {
   const idx = [];
   for (const p of people) {
@@ -117,8 +152,10 @@ function makeResolver(people, meId) {
     for (const { key, id } of idx) {
       if (key.every((k, j) => toks[i + j]?.t === 'w' && toks[i + j].v === k)) return [id, key.length];
     }
-    if (w.v.length >= 4 && !STOP.has(w.v) && !CAT_OF[w.v]) {
-      for (const { key, id } of idx) if (key.length === 1 && key[0].length >= 4 && key[0][0] === w.v[0] && lev1(w.v, key[0])) return [id, 1];
+    if (w.v.length >= 3 && !STOP.has(w.v) && !CAT_OF[w.v] && !PRON.has(w.v) && !PAY.has(w.v) && !SPLIT.has(w.v) && !CONSUME.has(w.v)) {
+      if (w.v.length >= 4) for (const { key, id } of idx) if (key.length === 1 && key[0].length >= 4 && key[0][0] === w.v[0] && lev1(w.v, key[0])) return [id, 1];
+      const ph = phon(w.v);
+      if (ph.length >= 3) for (const { key, id } of idx) if (key.length === 1 && phon(key[0]) === ph) return [id, 1];
     }
     return null;
   };
@@ -330,6 +367,7 @@ export function parseExpense(text, ctx) {
   }
 
   // Payers
+  const payerExplicit = payers.length > 0;
   if (!payers.length) {
     // "Deepak 500 dinner": a lone pending person before a number reads naturally as the payer only
     // when they said "paid"; otherwise default payer is me.
@@ -366,6 +404,7 @@ export function parseExpense(text, ctx) {
   if ((withFlag || (pending.length && !only && !owed.some((o) => o.amt != null || o.pct != null))) && !only) payers.forEach((p) => { if (!findOwed(p.id)) owed.push({ id: p.id, amt: null, pct: null }); });
   let partIds = owed.map((o) => o.id).filter((id) => !excluded.has(id));
 
+  const peopleExplicit = hasOwedInfo || !!ways || excluded.size > 0 || !!ratio;
   if (!hasOwedInfo) {
     if (ways) {
       if (members.length === ways) partIds = members.slice();
@@ -406,7 +445,8 @@ export function parseExpense(text, ctx) {
   }
   if (ratio && split.mode !== 'percent' && split.mode !== 'shares') warnings.push(`Ratio ${ratio.join(':')} needs ${ratio.length} people`);
 
-  return finish({ desc: descFrom(descToks), amount: total, paid, split });
+  const splitExplicit = !!(equal || ratio || pcts.length || exacts.length || ways || only);
+  return finish({ desc: descFrom(descToks), amount: total, paid, split, meta: { payer: payerExplicit, people: peopleExplicit, split: splitExplicit } });
 
   function descFrom(ts) {
     const words = ts.filter((t) => t.t === 'w' && !STOP.has(t.v) && !WAYS.has(t.v) && !CONSUME.has(t.v) && !PRON.has(t.v) && !PAY.has(t.v) && !SPLIT.has(t.v) && !WITH.has(t.v) && !FOR.has(t.v) && !EQUAL.has(t.v) && !DAYS.includes(t.v) && t.v !== 'kal').map((t) => t.v);
@@ -420,7 +460,21 @@ export function parseExpense(text, ctx) {
     const used = new Set([...Object.keys(d.paid), ...Object.keys(d.split.parts)]);
     const nn = [...newNames.entries()].filter(([k]) => used.has('new:' + k)).map(([k, v]) => ({ id: 'new:' + k, name: v }));
     const fallback = toks.some((t) => t.v === 'bill') ? 'Bill' : category !== 'general' ? cap1(category) : 'Expense';
-    return { ...d, desc: d.desc || fallback, category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings };
+    // Per-field state for the live checklist: ok = said, assumed = default, missing / bad = needs attention.
+    const m = d.meta || { payer: true, people: true, split: true };
+    const sum = (o) => Object.values(o || {}).reduce((a, b) => a + (+b || 0), 0);
+    const owedSum = d.amount != null ? sum(computeOwed(d.amount, d.split)) : 0;
+    const pctBad = d.split.mode === 'percent' && Math.abs(sum(d.split.parts) - 100) > 0.01;
+    const slots = {
+      what: d.desc ? 'ok' : 'assumed',
+      amount: d.amount != null ? 'ok' : 'missing',
+      paid: d.amount != null && sum(d.paid) !== d.amount ? 'bad' : m.payer ? 'ok' : 'assumed',
+      who: m.people ? 'ok' : 'assumed',
+      split: (d.amount != null && owedSum !== d.amount) || pctBad ? 'bad' : m.split ? 'ok' : 'assumed',
+      when: toks.some((t) => t.t === 'date' || t.v === 'yesterday' || t.v === 'kal' || DAYS.includes(t.v)) ? 'ok' : null,
+    };
+    const { meta, ...rest } = d;
+    return { ...rest, desc: d.desc || fallback, category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings, slots };
   }
 }
 
@@ -450,12 +504,12 @@ export function assignItems(text, items, ctx) {
     const words = clause.toLowerCase().match(/[a-z]{3,}/g) || [];
     const keys = words.filter((w) => !nameWords.has(w) && !ME.has(w) && !ALL.has(w) && !STOP.has(w) && !['had', 'ate', 'took', 'got', 'drank', 'ordered', 'item', 'items'].includes(w));
     if (/\b(rest|remaining|baaki|baki|else|others|everything)\b/i.test(clause)) {
-      out.forEach((it, i) => { if (!assigned.has(i)) { it.who = ids; assigned.add(i); } });
+      out.forEach((it, i) => { if (!assigned.has(i)) { it.who = ids; it.set = true; assigned.add(i); } });
       continue;
     }
     out.forEach((it, i) => {
       const n = it.name.toLowerCase();
-      if (keys.some((k) => n.includes(k) || (k.length >= 4 && n.split(/\s+/).some((w) => w.length >= 4 && (w.startsWith(k.slice(0, 4)) || k.startsWith(w.slice(0, 4))))))) { it.who = ids; assigned.add(i); }
+      if (keys.some((k) => n.includes(k) || (k.length >= 4 && n.split(/\s+/).some((w) => w.length >= 4 && (w.startsWith(k.slice(0, 4)) || k.startsWith(w.slice(0, 4))))))) { it.who = ids; it.set = true; assigned.add(i); }
     });
   }
   return out;

@@ -245,3 +245,23 @@ textarea.input { resize: none; min-height: 84px; line-height: 1.45; }
 .check[aria-checked="false"] svg { opacity: 0; }
 .toast button { background: var(--accent) !important; color: var(--on-accent) !important; border-radius: 9px; padding: 6px 12px !important; }
 .tag { white-space: nowrap; }
+
+/* live checklist */
+.pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pl { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; padding: 6px 11px 6px 9px; border-radius: 999px; line-height: 1.2; transition: background .25s, color .25s; }
+.pl::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; margin-right: 2px; }
+.pl b { color: var(--text); font-weight: 650; }
+.pl.ok { color: var(--pos); background: var(--pos-soft); }
+.pl.as { color: var(--warn); background: rgba(255, 181, 71, .12); }
+.pl.bad { color: var(--neg); background: var(--neg-soft); animation: nudge .4s; }
+.pl.new { color: var(--text); background: var(--accent-soft); }
+.pl.new::before { background: var(--accent); }
+@keyframes nudge { 30% { transform: translateX(-3px); } 60% { transform: translateX(3px); } }
+.ask { margin-top: 10px; font-size: 14px; font-weight: 600; display: flex; gap: 8px; align-items: flex-start; color: var(--warn); }
+.ask.need { color: var(--neg); }
+.ask.done { color: var(--pos); }
+.ask svg { margin-top: 1px; }
+.listen .pills { justify-content: center; margin: 4px 0 6px; }
+.listen .pl { font-size: 14px; padding: 8px 13px 8px 11px; }
+.listen .ask { justify-content: center; text-align: left; font-size: 15px; }
+.item-row.unread input { border-color: var(--warn); }

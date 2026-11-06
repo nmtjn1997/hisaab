@@ -237,3 +237,60 @@ t('unknown first name in a list after split into', () => {
   assert.equal(d.desc, 'Bill');
   assert.deepEqual(d.newNames.map((n) => n.name), ['Namit', 'Himi']);
 });
+
+import { hindiNumbers, phon } from '../js/parse.js';
+t('hindi amounts', () => {
+  assert.equal(P('do hazaar paanch sau ka khana').amount, 250000);
+  assert.equal(P('dedh sau chai').amount, 15000);
+  assert.equal(P('saade teen hazaar hotel').amount, 350000);
+  assert.equal(P('2 hazaar rent').amount, 200000);
+  assert.equal(P('Rahul ne 500 diye, sabme baant do').amount, 50000); // "do" alone is a verb
+});
+t('sound-alike names', () => {
+  assert.equal(phon('Deepak'), phon('Dipak'));
+  assert.equal(phon('Himi'), phon('Himmy'));
+  assert.equal(phon('Himi'), phon('Hemi'));
+  assert.equal(phon('Namit'), phon('Nameet'));
+  assert.deepEqual(P('snacks 200 paid by Dipak').paid, { dee: 20000 });
+  assert.deepEqual(P('cab 300 paid by Pria').paid, { pri: 30000 });
+});
+t('slots: defaults are assumed, said things are ok', () => {
+  const a = P('Dinner 800');
+  assert.deepEqual(a.slots, { what: 'ok', amount: 'ok', paid: 'assumed', who: 'assumed', split: 'assumed', when: null });
+  const b = P('Dinner 800 paid by Rahul split equally with Priya yesterday');
+  assert.deepEqual(b.slots, { what: 'ok', amount: 'ok', paid: 'ok', who: 'ok', split: 'ok', when: 'ok' });
+  assert.equal(P('paid by Rahul').slots.amount, 'missing');
+  assert.equal(P('dinner 1000, I paid 700').slots.paid, 'bad');
+  assert.equal(P('cab 500 namit 60% deepak 10%').slots.split, 'bad');
+  assert.equal(P('Rahul owes me 200').slots.paid, 'ok');
+});
+
+import { fixDigits, findDate } from '../js/receipt.js';
+t('ocr digit fixes and comma decimals', () => {
+  const r = parseReceipt('Masala Dosa 12O.00\nFilter Coffee 6S,00\nTotal 185.00');
+  assert.deepEqual(r.items.map((i) => i.amount), [12000, 6500]);
+  assert.equal(r.diff, 0);
+  assert.equal(fixDigits('l2O'), '120');
+});
+t('receipt reconcile, merchant, date', () => {
+  const r = parseReceipt('CAFE MONSOON\nBill No 12  06/11/2026\nPizza 420.00\nFries 180.00\nCGST 15.00\nGrand Total 700.00');
+  assert.equal(r.merchant, 'CAFE MONSOON');
+  assert.equal(new Date(r.date).getDate(), 6);
+  assert.equal(r.diff, 8500); // 700 - 600 - 15: a line was missed
+  assert.equal(findDate('date 31-12-2099'), null);
+});
+
+t('receipt: garbled tax line between subtotal and total still counts', () => {
+  const r = parseReceipt('Paneer Pizza 420.00\nBeer Pitcher 650.00\nSub Total 1070.00\n[Gol y2e 56 47.75\nService Charge 95.50\nGrand Total 1213.25');
+  assert.equal(r.items.length, 2);
+  assert.equal(r.extraSum, 14325);
+  assert.equal(r.diff, 0);
+});
+
+t('receipt: dropped item line becomes a placeholder, tax from totals', () => {
+  const r = parseReceipt('CAFE MONSOON\nPaneer Pizza 420.00\nBeer Pitcher 650.00\nSub Total 1250.00\nCGST 2.5% A 7.75\nService Charge 95.50\nGrand Total 1400.00');
+  assert.equal(r.unread, 18000);
+  assert.equal(r.items.at(-1).unread, true);
+  assert.equal(r.extraSum, 15000);
+  assert.equal(r.items.reduce((a, i) => a + i.amount, 0) + r.extraSum, r.total);
+});

@@ -156,14 +156,14 @@ function ensureEveryday() {
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 // Voice: keeps listening through short pauses. Stops ~3s after the last word once an amount
 // is heard, waits longer (~6s) while the amount is still missing, and always on Done.
-function listen(onText, gid) {
+function listen(onText, gid, opts = {}) {
   if (!SR) { toast('Voice input is not supported here. Use the mic on your keyboard.'); return; }
   const g = gid || st().lastGroup;
   const members = g && st().groups[g] ? memberList(g) : [st().me];
   const check = (t) => { try { return parseExpense(t, { people: peopleArr(), members, me: st().me }); } catch { return null; } };
   const ov = document.createElement('div');
   ov.className = 'listen';
-  ov.innerHTML = `<div class="orb">${icon('mic', 'lg')}</div><div class="said" aria-live="polite">Listening…</div><div class="preview" id="lvp" style="justify-content:center;max-width:420px"></div><p class="muted small" id="lvh" style="max-width:320px">Try “Dinner 1200 paid by Rahul, split with me and Priya”</p><div class="btns" style="margin-top:20px;width:100%;max-width:320px"><button class="btn" data-c>Cancel</button><button class="btn primary" data-d>Done</button></div>`;
+  ov.innerHTML = `<div class="orb">${icon('mic', 'lg')}</div><div class="said" aria-live="polite">Listening…</div><div class="preview" id="lvp" style="justify-content:center;max-width:420px"></div><div id="lvh" style="max-width:420px;width:100%"><p class="muted small" style="text-align:center">Say what, how much, who paid and who shares. Pills turn green as you say them.</p></div><div class="btns" style="margin-top:20px;width:100%;max-width:320px"><button class="btn" data-c>Cancel</button><button class="btn primary" data-d>Done</button></div>`;
   document.body.appendChild(ov);
   let finals = '', interim = '', cancelled = false, finished = false, stopping = false, timer = null, r = null;
   const started = Date.now();
@@ -177,19 +177,30 @@ function listen(onText, gid) {
   };
   const arm = () => {
     clearTimeout(timer);
-    const d = text() ? check(text()) : null;
-    const wait = !text() ? 9000 : d?.amount != null ? flag('voiceQuickStop') ? 2500 : 3500 : 6500;
-    timer = setTimeout(() => { stopping = true; try { r?.stop(); } catch {} setTimeout(end, 350); }, wait);
     const hint = ov.querySelector('#lvh');
-    if (d) {
-      const tags = [];
-      if (d.amount != null) tags.push(`<span class="tag a">${money(d.amount)}</span>`); else tags.push('<span class="tag w">amount?</span>');
-      tags.push(`<span class="tag">${esc(d.desc)}</span>`);
-      const nm = (id) => esc(id.startsWith('new:') ? d.newNames.find((n) => n.id === id)?.name || id.slice(4) : S.firstName(id));
-      tags.push(`<span class="tag">paid by ${Object.keys(d.paid).map(nm).join(', ') || 'you'}</span>`);
-      tags.push(`<span class="tag">${Object.keys(d.split.parts).length} sharing</span>`);
-      ov.querySelector('#lvp').innerHTML = tags.join('');
-      hint.textContent = d.amount != null ? 'Got it. Keep talking to add who paid or who shares, or pause to finish.' : 'Still need the amount…';
+    const d = text() && !opts.items ? check(text()) : null;
+    if (opts.items) {
+      // Bill mode: "pizza Deepak, beer me and Rahul, rest everyone"
+      const before = opts.items.map((i) => i.who.join());
+      const res = text() ? assignItems(text(), opts.items, { people: peopleArr(), me: st().me, members }) : opts.items;
+      const done = res.map((it, i) => it.who.join() !== before[i]);
+      const all = done.every(Boolean);
+      ov.querySelector('#lvp').innerHTML = `<div class="pills">${res.map((it, i) => `<span class="pl ${done[i] ? 'ok' : 'as'}"><span>${esc(it.name)}</span> <b>${done[i] ? esc(it.who.map((w) => S.firstName(w)).join(', ')) : 'everyone?'}</b></span>`).join('')}</div>`;
+      const left = res.filter((_, i) => !done[i]).map((it) => it.name);
+      hint.innerHTML = all ? askHTML({}) : `<div class="ask">${icon('sparkle', 'sm')}<span>${left.length === res.length ? 'Say who had what: “pizza Deepak, beer me and Rahul, rest everyone”.' : `Still open: ${esc(left.slice(0, 3).join(', '))}${left.length > 3 ? '…' : ''}. Say who had them, or “rest everyone”.`}</span></div>`;
+      timer = setTimeout(() => { stopping = true; try { r?.stop(); } catch {} setTimeout(end, 350); }, !text() ? 9000 : all ? 1800 : 4500);
+      return;
+    }
+    const nameOf = (id) => (id.startsWith('new:') ? d?.newNames.find((n) => n.id === id)?.name || id.slice(4) : S.pname(id));
+    const c = d ? checklist({ slots: d.slots, amount: d.amount, desc: d.desc, paid: d.paid, owedIds: d.amount != null ? Object.keys(computeOwed(d.amount, d.split)) : Object.keys(d.split.parts), split: d.split, date: d.date, newNames: d.newNames, nameOf }) : null;
+    // Everything said: stop quickly. Amount known: normal pause. Amount missing: give time to say it.
+    const wait = !text() ? 9000 : c?.allGreen ? 1800 : c?.ready ? (flag('voiceQuickStop') ? 2500 : 3500) : 6500;
+    timer = setTimeout(() => { stopping = true; try { r?.stop(); } catch {} setTimeout(end, 350); }, wait);
+    if (c) {
+      ov.querySelector('#lvp').innerHTML = c.html;
+      hint.innerHTML = askHTML(c);
+    } else {
+      ov.querySelector('#lvp').innerHTML = checklist({ slots: { what: 'assumed', amount: 'missing', paid: 'assumed', who: 'assumed', split: 'assumed' }, paid: { [st().me]: 0 }, owedIds: members, split: { mode: 'equal', parts: {} }, desc: '', nameOf: S.pname }).html;
     }
   };
   const start = () => {
@@ -706,6 +717,63 @@ function viewExpense(id) {
     },
   };
 }
+// Live checklist: one pill per thing an expense needs. Green = you said it, yellow = assumed
+// default, red = missing or does not add up. Returns the pills and the single next question.
+function checklist(m) {
+  const S_ = m.slots;
+  const nm = (id) => esc(m.nameOf(id).split(' ')[0]);
+  const list = (ids, max = 3) => ids.slice(0, max).map(nm).join(', ') + (ids.length > max ? ` +${ids.length - max}` : '');
+  const payers = Object.keys(m.paid || {});
+  const owedIds = m.owedIds || [];
+  const sp = m.split || { mode: 'equal', parts: {} };
+  const splitText = sp.mode === 'items' ? 'by items'
+    : sp.mode === 'equal' ? (owedIds.length === 1 ? `only ${list(owedIds)}` : 'equally')
+    : sp.mode === 'percent' || sp.mode === 'shares' ? owedIds.map((id) => +(+sp.parts[id] || 0).toFixed(2)).join(':')
+    : 'by amount';
+  const pill = (state, label, value) => `<span class="pl ${state}"><span>${label}</span>${value ? ` <b>${value}</b>` : ''}</span>`;
+  const out = [];
+  out.push(pill(S_.what === 'ok' ? 'ok' : 'as', 'For', esc(m.desc || 'Expense') + (S_.what === 'ok' ? '' : '?')));
+  out.push(S_.amount === 'ok' ? pill('ok', 'Amount', money(m.amount)) : pill('bad', 'Amount', 'missing'));
+  const paidSum = Object.values(m.paid || {}).reduce((a, b) => a + b, 0);
+  const paidVal = (payers.length > 1 ? payers.map((id) => `${nm(id)} ${money(m.paid[id])}`).join(', ') : list(payers)) + (S_.paid === 'bad' && m.amount ? ` · ${money(paidSum)} of ${money(m.amount)}` : '');
+  out.push(pill(S_.paid === 'ok' ? 'ok' : S_.paid === 'bad' ? 'bad' : 'as', 'Paid by', paidVal + (S_.paid === 'assumed' ? '?' : '')));
+  out.push(pill(S_.who === 'ok' ? 'ok' : 'as', 'Shared by', (S_.who === 'ok' ? '' : 'everyone · ') + `${owedIds.length} ${owedIds.length === 1 ? 'person' : 'people'}` + (owedIds.length <= 3 ? ` (${list(owedIds)})` : '') + (S_.who === 'ok' ? '' : '?')));
+  out.push(pill(S_.split === 'ok' ? 'ok' : S_.split === 'bad' ? 'bad' : 'as', 'Split', splitText + (S_.split === 'assumed' ? '?' : '')));
+  if (S_.when) out.push(pill('ok', 'When', fmtDate(m.date)));
+  (m.newNames || []).forEach((n) => out.push(`<span class="pl new">+ ${esc(n.name)} <b>new person</b></span>`));
+  const ask = S_.amount !== 'ok' ? 'How much was it? Say “1200” or “dedh hazaar”.'
+    : S_.paid === 'bad' ? `Paid adds to ${money(Object.values(m.paid).reduce((a, b) => a + b, 0))} of ${money(m.amount)}. Who paid the rest?`
+    : S_.split === 'bad' ? 'The split does not add up. Say amounts or percentages for everyone, or “split equally”.'
+    : S_.what !== 'ok' ? 'What was it for? Say “dinner”, “cab”, “groceries”…'
+    : S_.paid !== 'ok' ? 'Who paid? Say “paid by Rahul”, or leave it as you.'
+    : S_.who !== 'ok' ? 'Who shared it? Say “with Priya and Deepak”, or leave it as everyone.'
+    : S_.split !== 'ok' ? 'How to split? Say “equally”, “70-30”, or “Priya had 300”.'
+    : null;
+  const ready = S_.amount === 'ok' && S_.paid !== 'bad' && S_.split !== 'bad';
+  const allGreen = ['what', 'amount', 'paid', 'who', 'split'].every((k) => S_[k] === 'ok');
+  return { html: `<div class="pills">${out.join('')}</div>`, ask, ready, allGreen };
+}
+const askHTML = (c) => c.ask
+  ? `<div class="ask ${c.ready ? '' : 'need'}">${icon('sparkle', 'sm')}<span>${esc(c.ask)}</span></div>`
+  : `<div class="ask done">${icon('check', 'sm')}<span>All set. Tap Add, or keep talking to change anything.</span></div>`;
+
+function draftSlots() {
+  const p = draft.parsed?.slots || { what: 'assumed', amount: 'missing', paid: 'assumed', who: 'assumed', split: 'assumed', when: null };
+  const total = draftAmount();
+  const paidSum = sumVals(draftPaid());
+  const owedSum = sumVals(draftOwed());
+  const pctBad = draft.split.mode === 'percent' && Math.abs(Object.values(draft.split.parts).reduce((a, b) => a + (+b || 0), 0) - 100) > 0.01;
+  const t = draft.touched;
+  return {
+    what: draft.desc && (t.desc || p.what === 'ok' || draft.scan) ? 'ok' : 'assumed',
+    amount: total ? 'ok' : 'missing',
+    paid: total && paidSum !== total ? 'bad' : t.paid || p.paid !== 'assumed' ? 'ok' : 'assumed',
+    who: t.split || p.who === 'ok' || draft.split.mode === 'items' ? 'ok' : 'assumed',
+    split: (total && owedSum !== total) || pctBad ? 'bad' : t.split || p.split !== 'assumed' || draft.split.mode === 'items' ? 'ok' : 'assumed',
+    when: t.date || p.when ? 'ok' : null,
+  };
+}
+
 function splitLabel(sp) {
   if (!sp) return '';
   return { equal: 'equally', exact: 'by amount', percent: 'by %', shares: 'by shares', items: 'by items' }[sp.mode] || '';
@@ -774,7 +842,7 @@ function applyParse() {
   if (!draft.touched.desc) draft.desc = r.desc;
   if (!draft.touched.category) draft.category = r.category;
   if (!draft.touched.date) draft.date = r.date;
-  if (!draft.touched.paid) { draft.paid = { ...r.paid }; draft.multiPay = Object.keys(r.paid).length > 1; if (!Object.keys(draft.paid).length) draft.paid = { [st().me]: 0 }; }
+  if (!draft.touched.paid) { draft.paid = { ...r.paid }; draft.multiPay = Object.keys(r.paid).length > 1 || (r.amount != null && sumVals(r.paid) !== r.amount); if (!Object.keys(draft.paid).length) draft.paid = { [st().me]: 0 }; }
   if (!draft.touched.split && !(draft.items && draft.split.mode === 'items')) {
     draft.split = r.split.mode === 'exact' ? { mode: 'exact', parts: { ...r.split.parts } } : { mode: r.split.mode, parts: { ...r.split.parts } };
   }
@@ -832,26 +900,15 @@ function viewAdd(editId) {
 function renderPreview() {
   const pv = $('#pv');
   if (!pv) return;
-  const r = draft.text.trim() ? draft.parsed : null;
-  if (!r) { pv.innerHTML = `<span class="faint small">I understand: who paid, amounts, “split with”, “only me”, 70-30, 90%, “except Priya”, “Rahul owes me 200”, yesterday, and Hinglish like “maine 500 diye”.</span>`; return; }
-  const total = draftAmount();
-  const paid = draftPaid();
-  const owed = draftOwed();
-  const tags = [];
-  if (total) tags.push(`<span class="tag a">${money(total)}</span>`);
-  tags.push(`<span class="tag">${esc(draft.desc || 'Expense')}</span>`);
-  tags.push(`<span class="tag">paid by ${Object.keys(paid).map((id) => esc(dname(id).split(' ')[0]) + (Object.keys(paid).length > 1 ? ' ' + money(paid[id]) : '')).join(', ')}</span>`);
-  const n = Object.keys(owed).length;
-  tags.push(`<span class="tag">${draft.split.mode === 'equal' ? (n === 1 ? 'only ' + esc(dname(Object.keys(owed)[0]).split(' ')[0]) : `split equally · ${n}`) : 'split ' + splitLabel(draft.split)}</span>`);
-  if (dayKey(draft.date) !== dayKey(Date.now())) tags.push(`<span class="tag">${fmtDate(draft.date)}</span>`);
-  r.newNames.forEach((nn) => tags.push(`<span class="tag a">+ new: ${esc(nn.name)}</span>`));
-  r.warnings.filter((w) => !/How much/.test(w) || !total).forEach((w) => tags.push(`<span class="tag w">${esc(w)}</span>`));
-  pv.innerHTML = tags.join('');
+  if (!draft.text.trim() && !draft.scan && !draft.touched.amount) { pv.innerHTML = `<span class="faint small">Say or type who paid, how much, who shares and how: “split with”, “only me”, 70-30, 90%, “except Priya”, “Priya had 300”, “Rahul owes me 200”, yesterday, Hinglish like “maine 500 diye”.</span>`; return; }
+  const c = checklist({ slots: draftSlots(), amount: draftAmount(), desc: draft.desc, paid: draftPaid(), owedIds: Object.keys(draftOwed()), split: draft.split, date: draft.date, newNames: draft.parsed?.newNames || [], nameOf: dname });
+  pv.innerHTML = c.html + askHTML(c);
 }
 
 function renderForm() {
   const f = $('#form');
   if (!f) return;
+  if (draft.scan?.stage === 'done') renderScan();
   const members = draftMembers();
   const total = draftAmount();
   const owed = draftOwed();
@@ -901,7 +958,7 @@ function renderForm() {
 function itemsHTML(members) {
   const extras = draftAmount() - draft.items.reduce((s, i) => s + i.amount, 0);
   return `<input class="input" id="whohad" placeholder="Who had what? “pizza Deepak, beer me and Rahul, rest everyone”" style="margin-bottom:8px" autocomplete="off">
-    ${draft.items.map((it, i) => `<div class="item-row"><div class="top2"><input class="input" data-iname="${i}" value="${esc(it.name)}" aria-label="Item name"><input class="input amt" data-iamt="${i}" inputmode="decimal" value="${it.amount / 100}" aria-label="Item price"><button class="icon-btn" data-idel="${i}" aria-label="Remove item">${icon('x', 'sm')}</button></div>
+    ${draft.items.map((it, i) => `<div class="item-row${it.unread ? ' unread' : ''}"><div class="top2"><input class="input" data-iname="${i}" value="${esc(it.name)}" aria-label="Item name"><input class="input amt" data-iamt="${i}" inputmode="decimal" value="${it.amount / 100}" aria-label="Item price"><button class="icon-btn" data-idel="${i}" aria-label="Remove item">${icon('x', 'sm')}</button></div>
       <div class="chips">${members.map((id) => `<button class="chip" data-iwho="${i}" data-id="${id}" aria-pressed="${it.who.includes(id)}">${davatar(id)}${esc(dname(id).split(' ')[0])}</button>`).join('')}</div></div>`).join('')}
     <button class="btn sm ghost" data-act="addItem" style="margin-top:8px">${icon('plus', 'sm')} Item</button>
     ${extras ? `<div class="note" style="margin-top:8px">${extras > 0 ? 'Tax, service & extras' : 'Discount'} ${money(Math.abs(extras))} is shared in proportion to what each person had.</div>` : ''}
@@ -951,7 +1008,7 @@ function bindForm(f) {
   $$('[data-iname]', f).forEach((i) => (i.oninput = () => (draft.items[+i.dataset.iname].name = i.value)));
   $$('[data-iamt]', f).forEach((i) => { i.oninput = () => { draft.items[+i.dataset.iamt].amount = toPaise(parseFloat(i.value) || 0); renderSave(); }; i.onblur = () => renderForm(); });
   $$('[data-idel]', f).forEach((b) => (b.onclick = () => { draft.items.splice(+b.dataset.idel, 1); rerender(); }));
-  $$('[data-iwho]', f).forEach((b) => (b.onclick = () => { const it = draft.items[+b.dataset.iwho]; const id = b.dataset.id; it.who = it.who.includes(id) ? it.who.filter((x) => x !== id) : [...it.who, id]; buzz(); rerender(); }));
+  $$('[data-iwho]', f).forEach((b) => (b.onclick = () => { const it = draft.items[+b.dataset.iwho]; const id = b.dataset.id; it.who = it.who.includes(id) ? it.who.filter((x) => x !== id) : [...it.who, id]; it.set = true; buzz(); rerender(); }));
 }
 function softUpdate() {
   // update computed bits without stealing focus from the input being typed in
@@ -990,9 +1047,30 @@ function renderScan() {
   box.innerHTML = `<div class="card" style="margin-top:12px">
     ${s.url ? `<img class="receipt-img" src="${s.url}" alt="Bill photo">` : ''}
     ${s.stage === 'reading' ? `<div style="margin-top:12px"><div class="small muted" style="display:flex;justify-content:space-between"><span>${s.p < 0.05 ? 'Loading scanner (first time takes a few seconds)…' : 'Reading the bill…'}</span><span class="num">${Math.round(s.p * 100)}%</span></div><div class="progress" style="margin-top:6px"><i style="width:${Math.max(4, s.p * 100)}%"></i></div><div class="sk" style="height:14px;margin-top:12px;width:70%"></div><div class="sk" style="height:14px;margin-top:8px;width:50%"></div></div>` : ''}
-    ${s.stage === 'done' ? `<div class="note ok" style="margin-top:10px">${icon('check', 'sm')} Found ${s.count} item${s.count === 1 ? '' : 's'}${s.total ? ', total ' + money(s.total) : ''}. Check the numbers, then tap who had what below.</div>` : ''}
+    ${s.stage === 'done' ? scanPills(s) : ''}
     ${s.stage === 'error' ? `<div class="note warn" style="margin-top:10px">${esc(s.err)}</div>` : ''}
   </div>`;
+}
+// What the scanner got, as the same green / yellow / red pills the voice checklist uses.
+function scanPills(s) {
+  const items = draft.items || [];
+  const setN = items.filter((i) => i.set).length;
+  const off = Math.abs(s.diff || 0);
+  const pl = (st_, label, v) => `<span class="pl ${st_}"><span>${label}</span>${v ? ` <b>${v}</b>` : ''}</span>`;
+  const pills = [
+    pl(s.count ? 'ok' : 'bad', 'Items', s.count ? String(s.count) : 'none read'),
+    pl(s.totalRead ? 'ok' : 'as', 'Bill total', s.total ? money(s.total) + (s.totalRead ? '' : '?') : 'not found'),
+    s.unread ? pl('as', 'Unreadable line', money(s.unread)) : s.totalRead ? pl(off <= 100 ? 'ok' : 'as', 'Adds up', off <= 100 ? 'yes' : `${money(off)} ${s.diff > 0 ? 'missing' : 'extra'}`) : '',
+    s.extras ? pl('ok', 'Tax & extras', money(s.extras)) : '',
+    pl(s.date ? 'ok' : 'as', 'Date', s.date ? fmtDate(s.date) : 'today?'),
+    items.length ? pl(setN === items.length ? 'ok' : 'as', 'Who had what', `${setN}/${items.length}`) : '',
+  ].join('');
+  const ask = !s.count ? 'Could not read items. Type the total above and split normally.'
+    : s.unread ? `One line could not be read (${money(s.unread)}). It is added as “Unreadable item”: rename it from the bill and pick who had it.`
+    : off > 100 && s.totalRead ? `Items and tax come to ${money(s.total - s.diff)}, the bill says ${money(s.total)}. Check a price below; the gap is shared like tax if left.`
+    : setN < items.length ? 'Tap names on each item, or tap the mic and say “pizza Deepak, beer me and Rahul, rest everyone”.'
+    : null;
+  return `<div class="pills" style="margin-top:12px">${pills}</div>${ask ? `<div class="ask">${icon('sparkle', 'sm')}<span>${esc(ask)}</span></div>` : `<div class="ask done">${icon('check', 'sm')}<span>Bill is ready. Tap Add.</span></div>`}`;
 }
 async function scanFile(file) {
   if (!/^image\//.test(file.type)) { toast('Pick a photo of the bill'); return; }
@@ -1010,9 +1088,10 @@ async function scanFile(file) {
     const ms = draftMembers();
     draft.items = r.items.map((it) => ({ ...it, who: [...ms] }));
     if (r.total && !draft.touched.amount) { draft.amount = String(r.total / 100); }
-    if (!draft.desc || !draft.touched.desc) { const first = text.split('\n').map((l) => l.trim()).find((l) => /[a-z]{3}/i.test(l)); draft.desc = draft.desc || (first ? first.replace(/[^\w &'-]/g, '').trim().slice(0, 40) : 'Bill'); }
+    if (!draft.touched.desc) draft.desc = draft.desc || (r.merchant ? r.merchant.replace(/\b\w+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase()) : 'Bill');
+    if (r.date && !draft.touched.date) { draft.date = r.date; draft.touched.date = 1; }
     draft.split = r.items.length ? { mode: 'items', parts: {} } : draft.split;
-    draft.scan = { ...draft.scan, stage: 'done', count: r.items.length, total: r.total };
+    draft.scan = { ...draft.scan, stage: 'done', count: r.items.filter((i) => !i.unread).length, total: r.total, totalRead: r.totalRead, diff: r.diff, date: r.date, extras: r.extraSum, unread: r.unread };
     if (!r.items.length) draft.scan = { ...draft.scan, stage: 'error', err: 'Could not read items. Enter the total above and split normally.' };
   } catch (e) {
     draft.scan = { ...draft.scan, stage: 'error', err: e.message || 'Scan failed. Enter the amount by hand.' };
@@ -1275,7 +1354,9 @@ const ACT = {
   editPerson: (b) => personSheet(b.dataset.id),
   toggleSimplify: (b) => { const g = st().groups[b.dataset.g]; g.simplify = g.simplify === false; S.save(); render(); },
   addMember: (b) => { const g = st().groups[b.dataset.g]; if (!g.members.includes(b.dataset.id)) g.members.push(b.dataset.id); S.save(); render(); },
-  speak: () => listen((t) => { draft.text = draft.text.trim() ? draft.text.trim() + ', ' + t : t; const ta = $('#smart'); if (ta) ta.value = draft.text; applyParse(); render(); }, draft?.gid),
+  speak: () => draft?.items && draft.split.mode === 'items' && !Q.get('q')
+    ? listen((t) => { draft.items = assignItems(t, draft.items, { people: peopleArr(), me: st().me, members: draftMembers().filter((x) => !x.startsWith('new:')) }); draft.touched.split = 1; renderPreview(); renderForm(); }, draft.gid, { items: draft.items })
+    : listen((t) => { draft.text = draft.text.trim() ? draft.text.trim() + ', ' + t : t; const ta = $('#smart'); if (ta) ta.value = draft.text; applyParse(); render(); }, draft?.gid),
   scan: () => $('#file')?.click(),
   sampleBill: async () => { const r = await fetch('assets/sample-bill.jpg'); const b = await r.blob(); scanFile(new File([b], 'sample-bill.jpg', { type: 'image/jpeg' })); },
   clearSmart: () => { const g = draft.gid; draft = { ...newDraft(g), key: draft.key }; render(); },
