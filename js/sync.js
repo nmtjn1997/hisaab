@@ -1,7 +1,7 @@
 // Live groups: push local changes, pull everyone else's, merge by updatedAt.
 // The group key lives only on devices and in the link's #fragment.
 import * as S from './store.js';
-import { mergeGroup, cleanGroup } from './merge.js';
+import { mergeGroup, cleanGroup, isNewer } from './merge.js';
 
 export const API = 'https://hisaab-sync.backinstock.workers.dev/g/';
 
@@ -50,7 +50,8 @@ export function apply(gid, raw) {
   for (const id in data.expenses) {
     const re = mapExp(data.expenses[id], f);
     const le = st.expenses[id];
-    if (!le || (re.updatedAt || 0) > (le.updatedAt || 0)) {
+    // Compare in the shared (remote id) form so every phone breaks ties the same way.
+    if (isNewer(data.expenses[id], le && mapExp(le, toRemote(g)))) {
       st.expenses[id] = { ...re, gid, receiptId: le?.receiptId };
       changed++;
     }
@@ -58,7 +59,7 @@ export function apply(gid, raw) {
   st.comments ||= {};
   for (const id in data.comments || {}) {
     const rc = data.comments[id], lc = st.comments[id];
-    if (!lc || (rc.updatedAt || 0) > (lc.updatedAt || 0)) { st.comments[id] = { ...rc, gid, by: f(rc.by) }; changed++; }
+    if (!lc || (rc.updatedAt || 0) > (lc.updatedAt || 0) || ((rc.updatedAt || 0) === (lc.updatedAt || 0) && JSON.stringify(rc) > JSON.stringify({ ...lc, gid: undefined }))) { st.comments[id] = { ...rc, gid, by: f(rc.by) }; changed++; }
   }
   const members = data.members.map(f);
   for (const m of members) if (!g.members.includes(m)) { g.members.push(m); changed++; }
@@ -66,21 +67,48 @@ export function apply(gid, raw) {
   return changed;
 }
 
-const inflight = new Map();
-/** Push + pull one live group. Resolves to {ok, changed} and never throws. */
+// Fingerprint of everything this phone could push for a group. Hashes every row's id and
+// version, so an edit stamped with an older time (slow phone clock) still changes it.
+export function sig(gid) {
+  const st = S.state, g = st.groups[gid];
+  let h = 0x811c9dc5;
+  const mix = (str) => { for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } };
+  const rows = [];
+  for (const e of Object.values(st.expenses)) if (e.gid === gid) rows.push(e.id + ':' + e.updatedAt);
+  for (const c of Object.values(st.comments || {})) if (c.gid === gid) rows.push(c.id + ':' + c.updatedAt);
+  rows.sort().forEach(mix);
+  mix(`${g.name}|${g.nameAt || 0}|${g.members.join(',')}`);
+  return `${rows.length}:${h.toString(36)}`;
+}
+
+let devId;
+const device = () => (devId ||= (() => { try { let d = localStorage.getItem('hisaab:dev'); if (!d) { d = newKey().slice(0, 16); localStorage.setItem('hisaab:dev', d); } return d; } catch { return 'unknown-device'; } })());
+
+const inflight = new Map(), again = new Set();
+/**
+ * Push + pull one live group. Resolves to {ok, changed} and never throws.
+ * If called while a sync is running, one more sync runs right after it, so an edit made
+ * mid-flight is never marked as sent without being sent.
+ */
 export function sync(gid, { push = true } = {}) {
-  if (inflight.has(gid)) return inflight.get(gid);
+  if (inflight.has(gid)) { if (push) again.add(gid); return inflight.get(gid); }
   const g = S.state.groups[gid];
   if (!g?.live?.key) return Promise.resolve({ ok: false });
+  let wait = 400;
   const p = (async () => {
     try {
-      const body = push ? JSON.stringify({ data: payload(gid) }) : '{}';
-      const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': g.live.key }, body });
-      if (r.status === 429) return { ok: false, error: 'Busy, will retry' };
+      const sent = sig(gid);
+      // Push only when this phone has something new; otherwise just pull (cheap, never rate-limited).
+      push = push === 'force' || (push && sent !== g.live.sig);
+      const body = JSON.stringify({ ...(push ? { data: payload(gid) } : {}), histSince: g.live.histSeq || 0 });
+      const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': g.live.key, 'X-Device': device() }, body });
+      if (r.status === 429) { again.add(gid); wait = 3000; return { ok: false, error: 'Busy, will retry' }; }
       if (r.status === 403) { g.live.error = 'This live link was replaced'; S.save(); return { ok: false, error: g.live.error }; }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const { data } = await r.json();
-      const changed = apply(gid, data);
+      const { data, hist } = await r.json();
+      const changed = apply(gid, data) + applyHistory(gid, hist);
+      if (push) g.live.sig = sent;
+      if (sig(gid) !== g.live.sig) again.add(gid); // something changed while we were away
       g.live.syncedAt = Date.now();
       g.live.error = null;
       S.save();
@@ -88,10 +116,33 @@ export function sync(gid, { push = true } = {}) {
     } catch (e) {
       g.live.error = navigator.onLine ? 'Could not sync' : 'Offline';
       return { ok: false, error: g.live.error };
-    } finally { inflight.delete(gid); }
+    } finally {
+      inflight.delete(gid);
+      if (again.delete(gid)) setTimeout(() => sync(gid), wait);
+    }
   })();
   inflight.set(gid, p);
   return p;
+}
+
+// Server-written history, translated to this phone's ids.
+function applyHistory(gid, hist) {
+  if (!Array.isArray(hist) || !hist.length) return 0;
+  const g = S.state.groups[gid], f = toLocal(g);
+  const mapIds = (o) => (o && typeof o === 'object' ? Object.fromEntries(Object.entries(o).map(([k, v]) => [f(k), v])) : o);
+  const list = ((S.state.history ||= {})[gid] ||= []);
+  const have = new Set(list.map((h) => h.seq).filter(Boolean));
+  let n = 0;
+  for (const h of hist) {
+    if (!h || have.has(h.seq)) continue;
+    const ch = {};
+    for (const k in h.changes || {}) ch[k] = k === 'paid' || k === 'owed' ? h.changes[k].map(mapIds) : h.changes[k];
+    list.push({ ...h, by: h.by ? f(h.by) : h.by, paid: mapIds(h.paid), owed: mapIds(h.owed), changes: ch });
+    g.live.histSeq = Math.max(g.live.histSeq || 0, h.seq);
+    n++;
+  }
+  if (list.length > 3000) list.splice(0, list.length - 3000);
+  return n;
 }
 
 /** Fetch a group someone shared, without saving anything locally. */

@@ -4,6 +4,7 @@ import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseR
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
 import * as FX from './fx.js';
+import { describe as describeHist, revertPatch, FLAG_TEXT } from './history.js';
 import { initTelemetry, track, reportError } from './telemetry.js';
 import { dueRepeats, nextDate } from './repeat.js';
 import { FLAGS, loadFlagDefaults, flagDefault } from './flags.js';
@@ -272,7 +273,7 @@ const routes = [
   [/^\/$/, viewHome],
   [/^\/groups$/, viewGroups],
   [/^\/g\/(\w+)\/report$/, viewReport],
-  [/^\/g\/(\w+)(?:\/(expenses|balances|insights|members))?$/, viewGroup],
+  [/^\/g\/(\w+)(?:\/(expenses|balances|insights|members|history))?$/, viewGroup],
   [/^\/add$/, viewAdd],
   [/^\/e\/(\w+)\/edit$/, (id) => viewAdd(id)],
   [/^\/e\/(\w+)$/, viewExpense],
@@ -344,7 +345,7 @@ document.addEventListener('click', (e) => {
 });
 
 // Push local edits of live groups shortly after they happen.
-const liveSig = (gid) => { const g = st().groups[gid]; let m = g.nameAt || 0; for (const e of Object.values(st().expenses)) if (e.gid === gid && e.updatedAt > m) m = e.updatedAt; for (const c of Object.values(st().comments || {})) if (c.gid === gid && c.updatedAt > m) m = c.updatedAt; return m + ':' + g.members.length; };
+const liveSig = (gid) => Sync.sig(gid);
 let pushT;
 function schedulePush() {
   clearTimeout(pushT);
@@ -352,7 +353,7 @@ function schedulePush() {
     for (const g of Object.values(st().groups)) {
       if (!g.live?.key || g.deleted) continue;
       const sig = liveSig(g.id);
-      if (sig !== g.live.sig) Sync.sync(g.id).then((r) => { if (r.ok) g.live.sig = liveSig(g.id); if (r.changed) refreshIfShowing(g.id); });
+      if (sig !== g.live.sig) Sync.sync(g.id).then((r) => { if (r.changed) refreshIfShowing(g.id); });
     }
   }, 1200);
 }
@@ -365,9 +366,9 @@ let pollT;
 function pollLive(gid) {
   clearInterval(pollT);
   if (!st().groups[gid]?.live?.key) return;
-  const tick = () => { if (document.visibilityState === 'visible') Sync.sync(gid, { push: liveSig(gid) !== st().groups[gid].live.sig }).then((r) => { if (r.ok) st().groups[gid].live.sig = liveSig(gid); if (r.changed) refreshIfShowing(gid); updateLiveChip(gid); }); };
+  const tick = () => { if (document.visibilityState === 'visible') Sync.sync(gid, { push: liveSig(gid) !== st().groups[gid].live.sig }).then((r) => { if (r.changed) refreshIfShowing(gid); updateLiveChip(gid); }); };
   tick();
-  pollT = setInterval(() => { if (!location.hash.startsWith('#/g/' + gid)) return clearInterval(pollT); tick(); }, 15000);
+  pollT = setInterval(() => { if (!location.hash.startsWith('#/g/' + gid)) return clearInterval(pollT); tick(); }, 8000);
 }
 function updateLiveChip(gid) {
   const el = $('#livechip');
@@ -376,7 +377,7 @@ function updateLiveChip(gid) {
   el.textContent = l.error ? l.error : l.syncedAt ? 'Live · synced' : 'Live · syncing…';
   el.classList.toggle('w', !!l.error);
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Object.values(st().groups).filter((g) => g.live?.key && !g.deleted).forEach((g) => Sync.sync(g.id, { push: liveSig(g.id) !== g.live.sig }).then((r) => { if (r.ok) g.live.sig = liveSig(g.id); if (r.changed) refreshIfShowing(g.id); })); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Object.values(st().groups).filter((g) => g.live?.key && !g.deleted).forEach((g) => Sync.sync(g.id, { push: liveSig(g.id) !== g.live.sig }).then((r) => { if (r.changed) refreshIfShowing(g.id); })); });
 addEventListener('online', schedulePush);
 
 S.onChange((why) => {
@@ -513,7 +514,9 @@ function newGroupSheet(onDone) {
       const gid = S.addGroup(f.n.value, ids);
       close();
       buzz();
-      onDone ? onDone(gid) : go('/g/' + gid);
+      if (onDone) return onDone(gid);
+      go('/g/' + gid);
+      if (flag('liveGroups') && ids.length) setTimeout(() => inviteSheet(gid), 450);
     };
   });
 }
@@ -525,7 +528,7 @@ function viewGroup(gid, tab = 'expenses') {
   const me = st().me;
   const myNet = myGroupNet(gid);
   const total = exps.filter((e) => e.kind !== 'settle').reduce((s, e) => s + e.amount, 0);
-  const tabs = [['expenses', 'Expenses'], ['balances', 'Balances'], ['insights', 'Insights'], ['members', 'People']].filter(([k]) => k !== 'insights' || flag('insights'));
+  const tabs = [['expenses', 'Expenses'], ['balances', 'Balances'], ['history', 'History'], ['insights', 'Insights'], ['members', 'People']].filter(([k]) => k !== 'insights' || flag('insights'));
   let body = '';
   if (tab === 'expenses') {
     const qtxt = (Q.get('s') || '').toLowerCase();
@@ -545,6 +548,14 @@ function viewGroup(gid, tab = 'expenses') {
       <h2 class="h2">Who pays whom <button class="btn sm ghost" data-act="toggleSimplify" data-g="${gid}">${g.simplify !== false ? 'Simplified' : 'All debts'} ${icon('swap', 'sm')}</button></h2>
       ${tr.length ? `<div class="stack">${tr.map((t) => transferCard(t, gid)).join('')}</div>` : `<div class="card empty"><div class="art">${icon('check', 'lg')}</div><h3>All settled up</h3><p>Nobody owes anything in this group.</p></div>`}
       ${tr.length ? `<button class="btn block" style="margin-top:14px" data-act="shareGroup" data-g="${gid}">${icon('whatsapp', 'sm')} Send summary on WhatsApp</button>` : ''}`;
+  } else if (tab === 'history') {
+    const f = Q.get('f') || 'all';
+    const all = histEntries(gid);
+    const list = all.filter((h) => f === 'all' || (f === 'flag' ? h.d.flags.length : h.kind !== 'add'));
+    const flagged = all.filter((h) => h.d.flags.length).length;
+    body = `<nav class="seg" style="margin-top:14px">${[['all', 'Everything'], ['changes', 'Edits & deletes'], ['flag', `Flagged${flagged ? ' · ' + flagged : ''}`]].map(([k, l]) => `<a href="#/g/${gid}/history?f=${k}" ${f === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
+      <p class="faint small" style="margin:10px 4px">${st().groups[gid].live?.key ? 'Written by the server when it accepts a change, so nobody can edit or hide it from their phone.' : 'Kept on this phone. Make the group live to share it with everyone.'}</p>
+      ${list.length ? `<div class="list">${list.map(histRow).join('')}</div>` : `<div class="empty"><div class="art">${icon('check', 'lg')}</div><h3>${f === 'flag' ? 'Nothing suspicious' : 'No history yet'}</h3><p>${f === 'flag' ? 'No lowered amounts, removals or deletes.' : 'Every add, edit and delete shows up here.'}</p></div>`}`;
   } else if (tab === 'insights') {
     body = insightsHTML(exps.filter((e) => e.kind !== 'settle'), { gid });
   } else {
@@ -744,6 +755,7 @@ function viewExpense(id) {
       ${e.repeat && !e.repeat.until ? `<div class="note" style="margin-top:12px;align-items:center">${icon('repeat', 'sm')}<span style="flex:1">Repeats ${e.repeat.every === 'month' ? 'every month' : 'every week'}. Next one added on ${fmtDate(nextAfter(e))}.</span><button class="btn sm" data-act="stopRepeat" data-id="${id}">Stop</button></div>` : ''}
       ${e.repeatOf && st().expenses[e.repeatOf] ? `<a class="note" style="margin-top:12px" href="#/e/${e.repeatOf}">${icon('repeat', 'sm')} Added automatically from a repeating expense. Open the original to change or stop it.</a>` : ''}
       ${e.note ? `<h2 class="h2">Note</h2><div class="card">${esc(e.note)}</div>` : ''}
+      ${(() => { const hs = histEntries(e.gid).filter((h) => h.eid === id); return hs.length ? `<h2 class="h2">History <span class="faint small">${hs.length}</span></h2><div class="list">${hs.map((h) => histRow(h, true)).join('')}</div>` : ''; })()}
       ${commentsHTML(id)}
       ${e.receiptId ? `<h2 class="h2">Bill</h2><div id="rimg"><div class="sk" style="height:220px;border-radius:14px"></div></div>` : ''}
       ${e.text ? `<p class="faint small" style="margin:14px 4px">Added from: “${esc(e.text)}”</p>` : ''}
@@ -849,6 +861,20 @@ function commentsHTML(eid) {
     <form class="quick" id="cmt" style="margin-top:10px"><input name="t" maxlength="300" placeholder="Add a comment: “I paid the tip too”" aria-label="Add a comment" autocomplete="off"><button class="mic" type="submit" aria-label="Post comment">${icon('check')}</button></form>`;
 }
 // Changes by other people in a live group since you last opened it.
+function histEntries(gid) {
+  const nameOf = (id) => (id ? S.pname(id) : 'Someone');
+  return [...S.historyFor(gid)].reverse().map((h) => ({ ...h, d: describeHist(h, nameOf, money) }));
+}
+function histRow(h, onExpense) {
+  const mine = h.by === st().me;
+  const canUndo = !mine && h.kind !== 'add' && st().expenses[h.eid];
+  return `<div class="row hist ${h.d.flags.length ? 'flagged' : ''}" style="cursor:default;align-items:flex-start">${h.by ? av(h.by, 'sm') : `<span class="av sm">?</span>`}
+    <div class="main"><div class="s" style="white-space:normal;color:var(--text)">${onExpense ? esc(h.d.text.replace(/^(\S+) changed [^:]+:/, '$1 changed')) : `<a href="#/e/${esc(h.eid)}">${esc(h.d.text)}</a>`}</div>
+      <div class="s">${h.at ? ago(h.at) : ''}${h.dev ? ` · device ${esc(h.dev)}` : ''}${h.local ? ' · this phone' : ''}</div>
+      ${h.d.flags.length ? `<div class="chips" style="margin-top:6px">${h.d.flags.map((f) => `<span class="pl bad"><span>${esc(FLAG_TEXT[f] || f)}</span></span>`).join('')}</div>` : ''}</div>
+    ${canUndo ? `<button class="btn sm" data-act="undoHist" data-g="${esc(h.gid || '')}" data-eid="${esc(h.eid)}" data-seq="${esc(String(h.seq ?? h.at))}">Undo</button>` : ''}</div>`;
+}
+
 function whatsNew(gid) {
   const g = st().groups[gid], me = st().me, seen = g.seenAt || 0;
   if (!g.live?.key) return [];
@@ -1438,7 +1464,6 @@ async function viewJoin(gid, key) {
         st().groups[gid] = { id: gid, name: d.name, nameAt: d.nameAt, members: [st().me], createdAt: Date.now(), simplify: true, hue: hue(d.name), seenAt: Date.now(), live: { key, map } };
         Sync.apply(gid, d);
         const r = await Sync.sync(gid);
-        if (r.ok) st().groups[gid].live.sig = liveSig(gid);
         S.flush();
         go('/g/' + gid);
         toast(`Joined ${d.name}`);
@@ -1526,6 +1551,24 @@ function applyTheme() {
 }
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
 
+// "Invite friends now?" right after a group is made: one tap to a shareable link.
+function inviteSheet(gid) {
+  const g = st().groups[gid];
+  sheet(`<h3>Invite your friends?</h3><p class="muted small" style="margin-top:-6px">Share one link. Everyone who opens it can add expenses, edit and see balances live. No sign-up. Every change is kept in History.</p>
+    <button class="btn primary block" id="inv">${icon('whatsapp', 'sm')} Share invite link</button>
+    <button class="btn ghost block" style="margin-top:8px" data-x>Later</button>`, (el, close) => {
+    el.querySelector('[data-x]').onclick = close;
+    $('#inv', el).onclick = (e) => busy(e.currentTarget, async () => {
+      await goLive(gid);
+      close(); render();
+      const url = Sync.liveLink(gid);
+      const text = `Join "${g.name}" on Hisaab so we can all add expenses:`;
+      if (navigator.share) { try { await navigator.share({ title: g.name, text, url }); return; } catch (x) { if (x.name === 'AbortError') return; } }
+      open(waLink(text + '\n' + url), '_blank', 'noopener');
+    });
+  });
+}
+
 // ---------- live groups ----------
 async function goLive(gid) {
   const g = st().groups[gid];
@@ -1533,7 +1576,6 @@ async function goLive(gid) {
   g.live = { key: Sync.newKey(), map: {} };
   const r = await Sync.sync(gid);
   if (!r.ok) { delete g.live; S.save(); throw new Error('Could not go live. Check your connection.'); }
-  g.live.sig = liveSig(gid);
   S.save();
 }
 const hasContacts = () => 'contacts' in navigator && 'select' in (navigator.contacts || {});
@@ -1743,6 +1785,16 @@ const ACT = {
     });
   },
   print: () => print(),
+  undoHist: (b) => {
+    const e = st().expenses[b.dataset.eid];
+    if (!e) return;
+    const h = S.historyFor(e.gid).find((x) => x.eid === e.id && String(x.seq ?? x.at) === b.dataset.seq);
+    if (!h) return;
+    confirmSheet('Undo this change?', `${describeHist(h, (id) => (id ? S.pname(id) : 'Someone'), money).text}. Puts back what it was before. This undo is recorded in history too.`, 'Undo change', () => {
+      S.upsertExpense({ id: e.id, ...revertPatch(h) });
+      buzz(); render(); toast('Change undone');
+    }, false);
+  },
   applyNow: () => commitText(),
   stopRepeat: (b) => { const e = st().expenses[b.dataset.id]; S.upsertExpense({ id: e.id, repeat: { ...e.repeat, until: Date.now() } }); toast('Stopped repeating'); render(); },
   delComment: (b) => { S.deleteComment(b.dataset.id); render(); },

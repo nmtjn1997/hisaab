@@ -404,3 +404,28 @@ t('telemetry routes never carry ids or keys', () => {
   assert.equal(routeOf('/add?q=dinner 500 with Priya'), '/add');
   assert.equal(routeOf('/e/xyz'), '/e/:id');
 });
+
+t('dash note style: amount - what - payer', () => {
+  const c = { people: [{ id: 'me', name: 'Namit' }, { id: 'jj', name: 'Jeeju', aliases: ['deepak'] }], members: ['me', 'jj'], me: 'me', now: ctx.now };
+  const a = parseExpense('3810 petrol - jeeju', c);
+  assert.deepEqual(a.paid, { jj: 381000 }); assert.equal(a.desc, 'Petrol'); assert.equal(Object.keys(a.split.parts).length, 2);
+  const b = parseExpense('8000 - jim corbett room - namit', c);
+  assert.deepEqual(b.paid, { me: 800000 }); assert.equal(b.desc, 'Jim corbett room');
+  const d = parseExpense('950 - shopping - namit personal', c);
+  assert.deepEqual(computeOwed(d.amount, d.split), { me: 95000 });
+  assert.equal(parseExpense('dinner 500 - rahul and priya split', c).paid.me, 50000); // not a payer tail
+});
+
+import { diffEntry, describe as describeHist, revertPatch } from '../js/history.js';
+t('history: flags lowered amount and self-removal, revert restores', () => {
+  const before = { id: 'e1', desc: 'Safari', amount: 600000, paid: { n: 600000 }, owed: { n: 300000, d: 300000 } };
+  const after = { ...before, amount: 400000, paid: { n: 400000 }, owed: { n: 400000 }, editedBy: 'd' };
+  const h = diffEntry(before, after);
+  const r = describeHist(h, (x) => ({ n: 'Namit', d: 'Deepak' })[x] || x, (p) => '₹' + p / 100);
+  assert.deepEqual(r.flags.sort(), ['amount_down', 'self_removed']);
+  assert.match(r.text, /Deepak changed Safari: amount ₹6000 → ₹4000/);
+  const p = revertPatch(h);
+  assert.equal(p.amount, 600000);
+  assert.deepEqual(p.owed, { n: 300000, d: 300000 });
+  assert.equal(diffEntry(before, { ...before, updatedAt: 9 }), null); // no real change, no entry
+});

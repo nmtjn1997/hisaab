@@ -70,7 +70,22 @@ export function cleanGroup(g) {
   };
 }
 
-const newer = (x, y) => (!x ? y : !y ? x : (y.updatedAt || 0) > (x.updatedAt || 0) ? y : x);
+// Total order on versions so every phone and the server pick the same winner: later time wins;
+// on an exact tie (two slow clocks), the editor id then the content decide. Never "first arrived".
+export function isNewer(y, x) {
+  if (!x) return true;
+  if (!y) return false;
+  const a = y.updatedAt || 0, b = x.updatedAt || 0;
+  if (a !== b) return a > b;
+  const ea = y.editedBy || y.by || '', eb = x.editedBy || x.by || '';
+  if (ea !== eb) return ea > eb;
+  return canon(y) > canon(x);
+}
+
+// Same bytes on every phone and the server for the same expense, whatever the key order.
+const stable = (v) => (v && typeof v === 'object' ? (Array.isArray(v) ? `[${v.map(stable).join(',')}]` : `{${Object.keys(v).sort().filter((k) => v[k] !== undefined).map((k) => JSON.stringify(k) + ':' + stable(v[k])).join(',')}}`) : JSON.stringify(v ?? null));
+export const canon = (e) => stable(e && e.amount !== undefined ? cleanExpense(e) : e);
+const newer = (x, y) => (isNewer(y, x) ? y : x);
 
 export function mergeGroup(a, b) {
   if (!a) return b;

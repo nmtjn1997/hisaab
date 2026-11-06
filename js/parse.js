@@ -194,9 +194,22 @@ const nameCase = (s) => s.split(/\s+/).map(cap1).join(' ');
  * @param {{people:{id:string,name:string}[], members:string[], me:string, now?:number}} ctx
  * @returns parsed draft: {desc, amount(paise)|null, paid:{pid:paise}, split:{mode,parts}, newNames, warnings, category, date, kind}
  */
+// Note style people jot in chats: "3810 petrol - jeeju", "8000 - jim corbett room - namit",
+// "950 - shopping - namit personal". The last dash part is who paid; "personal" means only them.
+export function dashStyle(text) {
+  const parts = String(text || '').split(/\s+[-–]\s+/);
+  if (parts.length < 2) return text;
+  const last = parts[parts.length - 1].trim().toLowerCase();
+  const m = last.match(/^(\p{L}+(?:\s(?!personal$|only$|khud$)\p{L}+)?)(\s+(personal|only|khud))?$/u);
+  if (!m || CAT_OF[m[1]] || STOP.has(m[1]) || /\d/.test(last)) return text;
+  const rest = parts.slice(0, -1).join(' ').replace(/[()]/g, ' ');
+  return `${rest} paid by ${m[1]}${m[2] ? ` only ${m[1]}` : ''}`;
+}
+
 export function parseExpense(text, ctx) {
   const { people, me } = ctx;
   const members = ctx.members?.length ? ctx.members : [me];
+  text = dashStyle(text);
   const norm = normalize(text || '');
   const toks = tokenize(norm, text || '');
   const resolve = makeResolver(people, me);

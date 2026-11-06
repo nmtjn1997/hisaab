@@ -384,3 +384,6 @@ textarea.input { resize: none; min-height: 84px; line-height: 1.45; }
 .empty .art { animation: float 4s ease-in-out infinite; }
 @keyframes float { 50% { transform: translateY(-6px) rotate(-3deg); } }
 .pl.stay:not(.pop):not(.shake), .pl.stay:not(.pop)::before { animation: none; }
+.row.hist.flagged { background: var(--neg-soft); }
+.row.hist a { color: var(--text); }
+.row.hist .pl { font-size: 12px; padding: 4px 9px 4px 7px; }

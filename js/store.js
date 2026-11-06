@@ -1,5 +1,6 @@
 // Local-first state: one JSON blob in localStorage, receipts as blobs in IndexedDB.
 import { balances, sumVals } from './money.js';
+import { diffEntry } from './history.js';
 
 const KEY = 'hisaab:v1';
 const listeners = new Set();
@@ -9,7 +10,7 @@ export const uid = () => {
   return Date.now().toString(36).slice(-4) + [...a].map((b) => (b % 36).toString(36)).join('');
 };
 
-const empty = () => ({ v: 1, me: null, people: {}, groups: {}, expenses: {}, comments: {}, settings: { theme: 'system', cur: '₹' }, lastGroup: null });
+const empty = () => ({ v: 1, me: null, people: {}, groups: {}, expenses: {}, comments: {}, history: {}, settings: { theme: 'system', cur: '₹' }, lastGroup: null });
 
 function load() {
   try {
@@ -69,16 +70,31 @@ export function lastActivity(g) {
 // ---------- expenses ----------
 export const groupExpenses = (gid) => Object.values(state.expenses).filter((e) => e.gid === gid && !e.deleted).sort((a, b) => b.date - a.date || b.createdAt - a.createdAt);
 export const allExpenses = () => Object.values(state.expenses).filter((e) => !e.deleted && state.groups[e.gid] && !state.groups[e.gid].deleted);
+// A new version must sort after the one it replaces even if this phone's clock is behind.
+const stamp = (prev) => Math.max(Date.now(), (prev?.updatedAt || 0) + 1);
+
+// Local groups keep their own history; live groups get theirs from the server (tamper-proof).
+function recordLocal(prev, next) {
+  if (state.groups[next.gid]?.live?.key) return;
+  const h = diffEntry(prev, next, { at: next.updatedAt, local: true });
+  if (!h) return;
+  const list = ((state.history ||= {})[next.gid] ||= []);
+  list.push(h);
+  if (list.length > 3000) list.splice(0, list.length - 3000);
+}
+
 export function upsertExpense(e) {
   const now = Date.now();
   const id = e.id || uid();
   const prev = state.expenses[id];
-  state.expenses[id] = { ...prev, ...e, id, by: prev?.by || e.by || state.me, editedBy: state.me, createdAt: prev?.createdAt || now, updatedAt: now };
+  state.expenses[id] = { ...prev, ...e, id, by: prev?.by || e.by || state.me, editedBy: state.me, createdAt: prev?.createdAt || now, updatedAt: stamp(prev) };
+  recordLocal(prev && { ...prev }, state.expenses[id]);
   if (e.gid) state.lastGroup = e.gid;
   save();
   return id;
 }
-export function softDelete(id, flag = true) { if (state.expenses[id]) { state.expenses[id].deleted = flag; state.expenses[id].editedBy = state.me; state.expenses[id].updatedAt = Date.now(); save(); } }
+export function softDelete(id, flag = true) { const e = state.expenses[id]; if (e) { const prev = { ...e }; e.deleted = flag; e.editedBy = state.me; e.updatedAt = stamp(prev); recordLocal(prev, e); save(); } }
+export const historyFor = (gid) => (state.history?.[gid] || []);
 
 // ---------- comments ----------
 export function addComment(gid, eid, text) {
@@ -88,7 +104,7 @@ export function addComment(gid, eid, text) {
   return id;
 }
 export const commentsFor = (eid) => Object.values(state.comments || {}).filter((c) => c.eid === eid && !c.deleted).sort((a, b) => a.createdAt - b.createdAt);
-export function deleteComment(id) { const c = state.comments?.[id]; if (c) { c.deleted = true; c.updatedAt = Date.now(); save(); } }
+export function deleteComment(id) { const c = state.comments?.[id]; if (c) { c.deleted = true; c.updatedAt = stamp(c); save(); } }
 
 export const groupBalances = (gid) => balances(groupExpenses(gid));
 export function myTotals() {

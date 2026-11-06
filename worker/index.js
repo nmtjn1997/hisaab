@@ -2,6 +2,7 @@
 // The group key never leaves the client in a URL the server sees; only its SHA-256 is stored.
 import { DurableObject } from 'cloudflare:workers';
 import { cleanGroup, mergeGroup } from '../js/merge.js';
+import { diffEntry } from '../js/history.js';
 
 const ORIGINS = [/^https:\/\/([\w-]+\.)?(hisaab-s4u|gethisaab)\.pages\.dev$/, /^https:\/\/nmtjn1997\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1):\d+$/];
 const MAX_BODY = 2_000_000;
@@ -9,7 +10,7 @@ const MAX_BODY = 2_000_000;
 const cors = (origin) => ({
   'Access-Control-Allow-Origin': ORIGINS.some((r) => r.test(origin || '')) ? origin : 'https://gethisaab.pages.dev',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Key, X-New-Key, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Key, X-New-Key, X-Device, Authorization',
   'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
 });
@@ -22,21 +23,43 @@ async function sha256(s) {
 
 export class GroupDO extends DurableObject {
   writes = [];
-  async sync(keyHash, incoming, newHash) {
+  // Durable Objects run one request at a time per group (input gate), so read-merge-write
+  // below is atomic: two phones pushing at the same instant cannot overwrite each other.
+  async sync(keyHash, incoming, newHash, histSince = 0, dev = '') {
     const cur = await this.ctx.storage.get('g');
     if (cur && cur.keyHash !== keyHash) return { status: 403, body: { error: 'wrong key' } };
-    if (incoming || newHash) {
-      // At most 60 writes a minute per group: plenty for people, a wall for scripts.
+    // Only real changes count against the 120-a-minute write budget; re-sends of known data are free.
+    const budget = () => {
       const now = Date.now();
       this.writes = this.writes.filter((t) => now - t < 60000);
-      if (this.writes.length >= 60) return { status: 429, body: { error: 'slow down' } };
+      if (this.writes.length >= 120) return false;
       this.writes.push(now);
-    }
+      return true;
+    };
+    if (newHash && !budget()) return { status: 429, body: { error: 'slow down' } };
     if (newHash && cur) { cur.keyHash = newHash; await this.ctx.storage.put('g', cur); return { status: 200, body: { rev: cur.rev, data: cur.data } }; }
-    const data = mergeGroup(cur?.data || null, incoming ? cleanGroup(incoming) : null) || cleanGroup(null);
-    const rev = (cur?.rev || 0) + (incoming ? 1 : 0);
-    if (incoming || !cur) await this.ctx.storage.put('g', { keyHash, data, rev, updatedAt: Date.now() });
-    return { status: 200, body: { rev, data } };
+    const inc = incoming ? cleanGroup(incoming) : null;
+    const before = cur?.data?.expenses || {};
+    const data = mergeGroup(cur?.data || null, inc) || cleanGroup(null);
+    const hist = (await this.ctx.storage.get('hist')) || { seq: 0, items: [] };
+    let wrote = false;
+    // History is written HERE, from what the server actually accepted. Phones never send it.
+    if (inc) for (const id in inc.expenses) {
+      const n = data.expenses[id];
+      if (n !== inc.expenses[id]) continue; // the stored copy was newer: nothing changed
+      const h = diffEntry(before[id], n, { at: Date.now(), dev });
+      if (!h) continue;
+      h.seq = ++hist.seq;
+      hist.items.push(h);
+      wrote = true;
+    }
+    if (hist.items.length > 3000) hist.items.splice(0, hist.items.length - 3000);
+    const changed = !cur || JSON.stringify(data) !== JSON.stringify(cur.data);
+    if (changed && cur && !budget()) return { status: 429, body: { error: 'slow down' } };
+    const rev = (cur?.rev || 0) + (changed ? 1 : 0);
+    if (changed) await this.ctx.storage.put('g', { keyHash, data, rev, updatedAt: Date.now() });
+    if (wrote) await this.ctx.storage.put('hist', hist);
+    return { status: 200, body: { rev, data, hist: hist.items.filter((h) => h.seq > histSince) } };
   }
 }
 
@@ -163,7 +186,8 @@ export default {
     if (await limited(req, env)) return json({ error: 'slow down' }, 429, origin);
     const nk = req.headers.get('X-New-Key');
     if (nk && (nk.length < 16 || nk.length > 64)) return json({ error: 'bad key' }, 400, origin);
-    const r = await stub.sync(await sha256(key), body.data || null, nk ? await sha256(nk) : null);
+    const dev = (await sha256('d:' + (req.headers.get('X-Device') || req.headers.get('CF-Connecting-IP') || ''))).slice(0, 6);
+    const r = await stub.sync(await sha256(key), body.data || null, nk ? await sha256(nk) : null, Math.max(0, +body.histSince || 0), dev);
     // Sync health, keyed by a one-way hash of the group id: counts and timings, never content.
     if (env.DB) ctx.waitUntil((async () => {
       const gid = (await sha256('g:' + m[1])).slice(0, 12);
