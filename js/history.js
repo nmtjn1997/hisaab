@@ -55,7 +55,9 @@ export function describe(h, nameOf, money) {
     if (!removed.length && !added.length) parts.push('shares');
     if (h.by && removed.includes(h.by)) flags.push('self_removed');
     else if (removed.length) flags.push('someone_removed');
-    if (h.by && h.by in before && h.by in after && after[h.by] < before[h.by]) flags.push('self_share_down');
+    // Shifting cost onto others: own share down while the bill did not grow.
+    const grew = c.amount && c.amount[1] > c.amount[0];
+    if (!grew && h.by && h.by in before && h.by in after && after[h.by] < before[h.by]) flags.push('self_share_down');
   }
   return { text: `${who} changed ${h.desc}: ${parts.join(', ') || 'details'}`, flags };
 }

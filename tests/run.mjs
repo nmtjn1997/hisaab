@@ -429,3 +429,11 @@ t('history: flags lowered amount and self-removal, revert restores', () => {
   assert.deepEqual(p.owed, { n: 300000, d: 300000 });
   assert.equal(diffEntry(before, { ...before, updatedAt: 9 }), null); // no real change, no entry
 });
+
+t('history: undoing a removal is not flagged as lowering own share', () => {
+  const before = { id: 'e1', desc: 'Safari', amount: 400000, paid: { n: 400000 }, owed: { n: 400000 } };
+  const after = { ...before, amount: 600000, paid: { n: 600000 }, owed: { n: 300000, d: 300000 }, editedBy: 'n' };
+  assert.deepEqual(describeHist(diffEntry(before, after), (x) => x, String).flags, []);
+  const sneaky = { ...before, owed: { n: 100000, d: 300000 }, editedBy: 'n' };
+  assert.deepEqual(describeHist(diffEntry({ ...before, owed: { n: 200000, d: 200000 } }, sneaky), (x) => x, String).flags, ['self_share_down']);
+});
