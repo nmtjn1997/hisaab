@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hisaab: split bills by just saying it</title>
+<meta name="description" content="Split expenses with friends by typing or speaking. Scan bills, settle by UPI, share summaries on WhatsApp. Free, no sign-up, works offline.">
+<meta name="theme-color" content="#0a0b0f">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-MNzFgLWglVeoXtlgmTj7wFDwH0QKuSUq0ExujcdYHik=' https://cdn.jsdelivr.net 'wasm-unsafe-eval' blob:; worker-src 'self' blob: https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net https://tessdata.projectnaptha.com blob: data:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<meta property="og:title" content="Hisaab: split bills by just saying it">
+<meta property="og:description" content="Say “Dinner 1200 paid by Rahul, split with me and Priya” and it's done. Free, no sign-up.">
+<meta property="og:image" content="assets/og.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/app.css">
+<script>try{var t=JSON.parse(localStorage.getItem('hisaab:v1')||'{}').settings?.theme||'system';if(t==='system')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top" id="top"></header>
+  <main id="view" tabindex="-1">
+    <div style="padding-top:16px"><div class="sk" style="height:150px;border-radius:24px"></div><div class="sk" style="height:56px;margin-top:14px;border-radius:18px"></div><div class="sk" style="height:220px;margin-top:22px;border-radius:18px"></div></div>
+  </main>
+  <nav class="nav" id="nav" aria-label="Main"></nav>
+</div>
+<noscript><p style="padding:20px">Hisaab needs JavaScript.</p></noscript>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
