@@ -360,3 +360,16 @@ t('parser: monthly / weekly / har mahine', () => {
   assert.equal(P('dinner 800').repeat, null);
   assert.equal(P('rent 25000 every month').desc, 'Rent');
 });
+
+import { renameInText, parseRename } from '../js/parse.js';
+t('heard: each person with the word that was said', () => {
+  const d = P('dinner 800 paid by Dipak with Hemi');
+  assert.deepEqual(d.heard, [{ id: 'dee', word: 'dipak' }, { id: 'new:hemi', word: 'hemi' }]);
+});
+t('rename in text: whole words, any case', () => {
+  assert.equal(renameInText('Dinner with Hemi and hemi, Hemingway', 'hemi', 'Himi'), 'Dinner with Himi and Himi, Hemingway');
+  assert.deepEqual(parseRename('rename Hemi to Himi'), { from: 'Hemi', to: 'Himi' });
+  assert.deepEqual(parseRename("not Hemi, it's Himi"), { from: 'Hemi', to: 'Himi' });
+  assert.deepEqual(parseRename('Hemi nahi Himi hai'), { from: 'Hemi', to: 'Himi' });
+  assert.equal(parseRename('not Priya, Rahul paid'), null);
+});

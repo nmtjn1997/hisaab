@@ -1,6 +1,6 @@
 import * as S from './store.js';
 import { fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balances } from './money.js';
-import { parseExpense, findPeople, assignItems, CATEGORIES } from './parse.js';
+import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseRename, phon } from './parse.js';
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
 import { dueRepeats, nextDate } from './repeat.js';
@@ -888,7 +888,12 @@ const RESET_RE = /\b(scratch that|start over|start again|clear (it|all|everythin
 // so "actually 1500" or "remove Priya" fixes things even after tapping around.
 function addSpoken(t) {
   const m = t.match(RESET_RE);
-  if (m) {
+  const rn = parseRename(t);
+  if (rn && draft.text) {
+    draft.text = renameInText(draft.text, rn.from, rn.to);
+    delete draft.touched.paid; delete draft.touched.split;
+    toast(`“${cap(rn.from)}” is now ${cap(rn.to)}`);
+  } else if (m) {
     const rest = t.slice(m.index + m[0].length).replace(/^[\s,.]+/, '');
     draft = { ...newDraft(draft.gid), key: draft.key };
     draft.text = rest;
@@ -946,7 +951,7 @@ function viewAdd(editId) {
       <textarea id="smart" rows="2" placeholder="Say or type it: “Pizza 900 paid by Deepak, split with me and Rahul”" aria-label="Describe the expense">${esc(draft.text)}</textarea>
       <div class="bar">
         <button class="btn sm" data-act="scan" ${flag('scan') ? '' : 'hidden'}>${icon('camera', 'sm')} Scan bill</button>
-        <span class="sp"></span>
+        <span class="sp"><span id="applyst"></span></span>
         ${draft.text ? `<button class="icon-btn" data-act="clearSmart" aria-label="Clear">${icon('x', 'sm')}</button>` : ''}
         <button class="mic" data-act="speak" aria-label="Speak" ${flag('voice') ? '' : 'hidden'}>${icon('mic')}</button>
       </div>
@@ -962,7 +967,17 @@ function viewAdd(editId) {
       const ta = $('#smart', v);
       if (ta) {
         let t;
-        ta.oninput = () => { draft.text = ta.value; clearTimeout(t); t = setTimeout(() => { if (draft.text.trim()) applyParse(); renderPreview(); renderForm(); }, 160); };
+        ta.oninput = () => {
+          draft.text = ta.value;
+          draft.pending = true;
+          clearTimeout(t);
+          t = setTimeout(() => { previewTyping(); }, 120);
+          clearTimeout(commitT);
+          commitT = setTimeout(commitText, 2000);
+          renderSave();
+        };
+        ta.onblur = () => setTimeout(commitText, 180); // let a tap on a chip land before the preview re-renders
+        ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitText(); ta.blur(); } };
         if (!draft.text && !editing && !Q.get('scan') && matchMedia('(hover:hover)').matches) ta.focus();
       }
       $('#file', v)?.addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) scanFile(f); });
@@ -974,12 +989,77 @@ function viewAdd(editId) {
   };
 }
 
+let commitT;
+const parseCtx = () => ({ people: peopleArr(), members: draft.gid ? memberList(draft.gid) : [st().me], me: st().me });
+// While typing: pills follow every keystroke, the form waits until you pause.
+function previewTyping() {
+  if (!draft.pending) return;
+  draft.preview = draft.text.trim() ? parseExpense(draft.text, parseCtx()) : null;
+  renderPreview();
+}
+function commitText() {
+  clearTimeout(commitT);
+  if (!draft?.pending) return;
+  draft.pending = false;
+  draft.preview = null;
+  if (draft.text.trim()) applyParse();
+  renderPreview();
+  renderForm();
+  const st_ = $('#applyst');
+  if (st_) { st_.innerHTML = `${icon('check', 'sm')} Applied`; st_.className = 'applied'; setTimeout(() => { if (st_.isConnected) st_.innerHTML = ''; }, 1600); }
+}
+function bindFixNames(root) {
+  $$('[data-fixname]', root).forEach((b) => (b.onclick = () => fixNameSheet(b.dataset.fixname)));
+}
+// "You said Hemi. Who is it?" Pick a person or type the right name; the sentence is fixed at the source.
+function fixNameSheet(word) {
+  const key = phon(word);
+  const lev = (a, b) => { const m = [...Array(b.length + 1).keys()]; for (let i = 1; i <= a.length; i++) { let p = m[0]; m[0] = i; for (let j = 1; j <= b.length; j++) { const t = m[j]; m[j] = Math.min(m[j] + 1, m[j - 1] + 1, p + (a[i - 1] === b[j - 1] ? 0 : 1)); p = t; } } return m[b.length]; };
+  const ppl = peopleArr().map((p) => ({ p, d: phon(p.name.split(' ')[0]) === key ? -1 : lev(word.toLowerCase(), p.name.split(' ')[0].toLowerCase()) })).sort((a, b) => a.d - b.d).slice(0, 10);
+  sheet(`<h3>You said “${esc(cap(word))}”</h3><p class="muted small" style="margin-top:-6px">Who did you mean?</p>
+    <div class="chips">${ppl.map(({ p }) => `<button class="chip" data-pick="${esc(p.id === st().me ? 'me' : p.name.split(' ')[0])}">${av(p.id)}${esc(p.id === st().me ? 'Me' : p.name)}</button>`).join('')}</div>
+    <form id="fx" style="margin-top:14px"><label class="field"><span>Or type the right name</span><input class="input" name="n" maxlength="40" value="${esc(cap(word))}" autocomplete="off"></label><button class="btn primary block">Use this name</button></form>`, (el, close) => {
+    const use = (to) => {
+      to = String(to).trim();
+      if (!to || to.toLowerCase() === word.toLowerCase()) { close(); return; }
+      draft.text = renameInText(draft.text, word, to);
+      delete draft.touched.paid; delete draft.touched.split;
+      const ta = $('#smart'); if (ta) ta.value = draft.text;
+      draft.pending = true;
+      close();
+      commitText();
+      toast(`“${cap(word)}” is now ${to === 'me' ? 'you' : cap(to)}`);
+    };
+    $$('[data-pick]', el).forEach((b) => (b.onclick = () => use(b.dataset.pick)));
+    $('#fx', el).onsubmit = (e) => { e.preventDefault(); use(e.target.n.value); };
+  });
+}
+function heardChips(heard) {
+  if (!heard?.length) return '';
+  return `<div class="heard"><span class="faint small">People I heard</span>${heard.map((h) => {
+    const isNew = h.id.startsWith('new:');
+    const name = isNew ? null : S.pname(h.id, false);
+    const same = name && name.toLowerCase().split(' ').includes(h.word.toLowerCase());
+    return `<button class="chip ${isNew ? 'new' : ''}" data-fixname="${esc(h.word)}">${avName(isNew ? h.word : name)}<span>${esc(cap(h.word))}${same ? '' : ` <span class="faint">→ ${isNew ? 'new person' : esc(name.split(' ')[0])}</span>`}</span>${icon('edit', 'sm')}</button>`;
+  }).join('')}</div>`;
+}
+const cap = (w) => String(w).replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+
 function renderPreview() {
   const pv = $('#pv');
   if (!pv) return;
+  if (draft.pending && draft.preview) {
+    const d = draft.preview;
+    const nameOf = (id) => (id.startsWith('new:') ? d.newNames.find((n) => n.id === id)?.name || id.slice(4) : S.pname(id));
+    const c = checklist({ slots: d.slots, amount: d.amount, desc: d.desc, paid: d.paid, owedIds: d.amount != null ? Object.keys(computeOwed(d.amount, d.split)) : Object.keys(d.split.parts), split: d.split, date: d.date, newNames: d.newNames, repeat: d.repeat, nameOf });
+    pv.innerHTML = c.html + heardChips(d.heard) + `<div class="ask"><span class="countdown"></span><span style="flex:1">Updating the form when you pause…</span><button class="btn sm" data-act="applyNow">Apply now</button></div>`;
+    bindFixNames(pv);
+    return;
+  }
   if (!draft.text.trim() && !draft.scan && !draft.touched.amount) { pv.innerHTML = `<span class="faint small">Say or type who paid, how much, who shares and how: “split with”, “only me”, 70-30, 90%, “except Priya”, “Priya had 300”, “Rahul owes me 200”, yesterday, Hinglish like “maine 500 diye”.</span>`; return; }
   const c = checklist({ jump: true, repeat: draft.repeat, slots: draftSlots(), amount: draftAmount(), desc: draft.desc, paid: draftPaid(), owedIds: Object.keys(draftOwed()), split: draft.split, date: draft.date, newNames: draft.parsed?.newNames || [], nameOf: dname });
-  pv.innerHTML = c.html + askHTML(c) + (draft.text.trim() ? `<p class="faint small" style="margin:8px 2px 0">Tap a pill to fix it, or keep talking: “remove Priya”, “actually 1500”.</p>` : '');
+  pv.innerHTML = c.html + heardChips(draft.parsed?.heard) + askHTML(c) + (draft.text.trim() ? `<p class="faint small" style="margin:8px 2px 0">Tap a pill or a name to fix it, or keep talking: “remove Priya”, “actually 1500”, “rename Hemi to Himi”.</p>` : '');
+  bindFixNames(pv);
   $$('[data-jump]', pv).forEach((el) => (el.onclick = el.onkeydown = (e) => {
     if (e.type === 'keydown' && e.key !== 'Enter') return;
     const t = document.getElementById(el.dataset.jump);
@@ -1119,6 +1199,7 @@ function switchGroup(gid) {
 function renderSave() {
   const b = $('#save');
   if (!b) return;
+  if (draft.pending) { b.innerHTML = `${icon('check', 'sm')} Apply changes`; b.disabled = false; $('#probs').textContent = ''; return; }
   const p = draftProblems();
   const total = draftAmount();
   b.innerHTML = `${icon('check', 'sm')} ${draft.id ? 'Save changes' : 'Add'} ${total ? money(total) : ''}`;
@@ -1186,6 +1267,7 @@ async function scanFile(file) {
 }
 
 async function saveDraft(btn) {
+  if (draft.pending) { commitText(); return; }
   if (draftProblems().length || btn.classList.contains('busy')) return;
   await busy(btn, async () => {
     const total = draftAmount();
@@ -1589,6 +1671,7 @@ const ACT = {
     });
   },
   print: () => print(),
+  applyNow: () => commitText(),
   stopRepeat: (b) => { const e = st().expenses[b.dataset.id]; S.upsertExpense({ id: e.id, repeat: { ...e.repeat, until: Date.now() } }); toast('Stopped repeating'); render(); },
   delComment: (b) => { S.deleteComment(b.dataset.id); render(); },
   seenGroup: (b) => { st().groups[b.dataset.g].seenAt = Date.now(); S.save(); render(); },

@@ -207,7 +207,7 @@ export function parseExpense(text, ctx) {
   const T = [];
   for (let i = 0; i < toks.length; ) {
     const r = resolve(toks, i);
-    if (r) { T.push({ t: 'p', v: r[0], cap: toks[i].cap }); i += r[1]; }
+    if (r) { T.push({ t: 'p', v: r[0], cap: toks[i].cap, src: toks.slice(i, i + r[1]).map((x) => x.v).join(' ') }); i += r[1]; }
     else T.push(toks[i++]);
   }
 
@@ -233,11 +233,11 @@ export function parseExpense(text, ctx) {
     if (isNameSlotWord(i)) {
       const disp = nameCase(T[i].v);
       newNames.set(T[i].v, disp);
-      T[i] = { t: 'p', v: 'new:' + T[i].v, cap: true };
+      T[i] = { t: 'p', v: 'new:' + T[i].v, cap: true, src: T[i].v };
     }
   }
   // A new name found once counts everywhere ("namit and himi ... himi is the name").
-  for (let i = 0; i < T.length; i++) if (T[i].t === 'w' && newNames.has(T[i].v)) T[i] = { t: 'p', v: 'new:' + T[i].v, cap: true };
+  for (let i = 0; i < T.length; i++) if (T[i].t === 'w' && newNames.has(T[i].v)) T[i] = { t: 'p', v: 'new:' + T[i].v, cap: true, src: T[i].v };
   // Pronouns -> the nearest other person mentioned before (or else after) them.
   for (let i = 0; i < T.length; i++) {
     if (T[i].t !== 'w' || !PRON.has(T[i].v)) continue;
@@ -487,6 +487,16 @@ export function parseExpense(text, ctx) {
     const words = ts.filter((t) => t.t === 'w' && !STOP.has(t.v) && !OVERRIDE.has(t.v) && !ADD.has(t.v) && !REMOVE.has(t.v) && t.v !== 'bhi' && !RENAME.has(t.v) && !WAYS.has(t.v) && !CONSUME.has(t.v) && !PRON.has(t.v) && !PAY.has(t.v) && !SPLIT.has(t.v) && !WITH.has(t.v) && !FOR.has(t.v) && !EQUAL.has(t.v) && !DAYS.includes(t.v) && t.v !== 'kal').map((t) => t.v);
     return words.length ? cap1(words.join(' ')) : '';
   }
+  // Each person exactly as the words were heard, so a misheard name can be fixed at the source.
+  function heardList() {
+    const seen = new Set(), out = [];
+    for (const t of T) {
+      if (t.t !== 'p' || !t.src || t.v === '*' || ME.has(t.src) || ALL.has(t.src) || PRON.has(t.src)) continue;
+      const k = t.v + '|' + t.src;
+      if (!seen.has(k)) { seen.add(k); out.push({ id: t.v, word: t.src }); }
+    }
+    return out;
+  }
   function finish(d) {
     const descWords = (d.desc || '').toLowerCase().split(/\s+/);
     const category = descWords.map((w) => CAT_OF[w] || CAT_OF[w.replace(/s$/, '')]).find(Boolean) || 'general';
@@ -512,7 +522,7 @@ export function parseExpense(text, ctx) {
     const low = ' ' + (text || '').toLowerCase() + ' ';
     const repeat = /\b(monthly|every month|each month|per month|har mahin[ae]|mahine ka|har month)\b/.test(low) ? 'month' : /\b(weekly|every week|each week|har hafte|har week)\b/.test(low) ? 'week' : null;
     const { meta, ...rest } = d;
-    return { ...rest, desc: d.desc || fallback, category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings, slots, repeat };
+    return { ...rest, desc: d.desc || fallback, category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings, slots, repeat, heard: heardList() };
   }
 }
 
@@ -551,4 +561,21 @@ export function assignItems(text, items, ctx) {
     });
   }
   return out;
+}
+
+/** Replace a whole word (any case) in the user's sentence. */
+export function renameInText(text, from, to) {
+  const esc = from.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  return String(text).replace(new RegExp(`(^|[^\\p{L}\\p{N}_])${esc}(?=$|[^\\p{L}\\p{N}_])`, 'giu'), (_, pre) => pre + to);
+}
+
+/** "rename Hemi to Himi", "change Dipak to Deepak", "not Hemi, it's Himi" -> {from, to} */
+export function parseRename(t) {
+  let m = String(t).match(/\b(?:rename|change|replace|correct)\s+(\p{L}+)\s+(?:to|as|with|into)\s+(\p{L}+(?:\s+\p{L}+)?)/iu);
+  if (m) return { from: m[1], to: m[2] };
+  m = String(t).match(/\bnot\s+(\p{L}+)\s*,?\s*(?:it'?s|it is|its|name is|naam)\s+(\p{L}+)/iu);
+  if (m) return { from: m[1], to: m[2] };
+  m = String(t).match(/\b(\p{L}+)\s+nahi\s*,?\s*(\p{L}+)\s+(?:hai|bolo|likho)\b/iu);
+  if (m) return { from: m[1], to: m[2] };
+  return null;
 }

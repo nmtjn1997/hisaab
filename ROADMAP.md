@@ -10,6 +10,7 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Fix misheard names: "People I heard" chips (Dipak -> Deepak, Hemi -> new person), tap to pick the right person or type the name, or say "rename Hemi to Himi" / "not Hemi, it's Himi" / "Hemi nahi Himi hai". Typing previews live and applies after a 2s pause, on leaving the box, on Enter, or with Apply.
 - 2026-11-06 Repeating expenses: Once / Weekly / Monthly, "rent 25000 monthly" or "har mahine" by voice, missed periods added on open with ids that never double-add in live groups, month-end dates kept, Stop button, repeat marker on rows.
 - 2026-11-06 Fix by voice or text: "remove Priya", "Priya nahi", "add Amit", "Amit bhi", "actually 1500", "make it 950", "paid by Deepak instead", "actually equally", "call it team lunch", "scratch that". Pills jump to their field. Comments now push in live groups.
 - 2026-11-06 Security: escaped category output (XSS via live group), prototype-key ids blocked, categories and split modes allow-listed on server and client, per-group (60/min) and per-IP (300/min) rate limits, "Make a new live link" key rotation, persistent storage request, backup nudge, global error net.
