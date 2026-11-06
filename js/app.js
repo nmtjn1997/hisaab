@@ -858,7 +858,9 @@ function whatsNew(gid) {
 // ---------- add / edit ----------
 let draft = null;
 function newDraft(gid) {
-  const g = gid && st().groups[gid] ? gid : st().lastGroup && st().groups[st().lastGroup] && !st().groups[st().lastGroup].deleted ? st().lastGroup : null;
+  // Only a group you can see: a deleted or archived one would hide the expense.
+  const ok = (id) => id && st().groups[id] && !st().groups[id].deleted && !st().groups[id].archived;
+  const g = ok(gid) ? gid : ok(st().lastGroup) ? st().lastGroup : S.groupList()[0]?.id || null;
   const members = g ? memberList(g) : [st().me];
   return { gid: g, text: '', desc: '', amount: '', date: Date.now(), category: 'general', paid: { [st().me]: 0 }, multiPay: false, split: { mode: 'equal', parts: Object.fromEntries(members.map((m) => [m, 1])) }, items: null, newPeople: [], touched: {}, note: '', receiptBlob: null, receiptId: null };
 }
@@ -1009,7 +1011,7 @@ function viewAdd(editId) {
       $('#file', v)?.addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) scanFile(f); });
       if (Q.get('scan') && !draft.scanned) { draft.scanned = 1; setTimeout(() => (Q.get('scan') === 'demo' ? ACT.sampleBill() : $('#file')?.click()), 50); }
       $('#save', v).onclick = (e) => saveDraft(e.currentTarget);
-      if (!groups.length && !draft.gid) { draft.gid = ensureEveryday(); draft.split.parts = { [st().me]: 1 }; }
+      if (!draft.gid) { draft.gid = groups[0]?.id || ensureEveryday(); draft.split = { mode: 'equal', parts: Object.fromEntries(memberList(draft.gid).map((m) => [m, 1])) }; if (draft.text.trim()) applyParse(); }
       renderPreview(); renderForm(); renderScan();
     },
   };

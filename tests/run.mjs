@@ -373,3 +373,26 @@ t('rename in text: whole words, any case', () => {
   assert.deepEqual(parseRename('Hemi nahi Himi hai'), { from: 'Hemi', to: 'Himi' });
   assert.equal(parseRename('not Priya, Rahul paid'), null);
 });
+
+t('user case: shared by both of us, paid by a new person', () => {
+  const c = { people: [{ id: 'me', name: 'Namit' }], members: ['me'], me: 'me', now: ctx.now };
+  const d = parseExpense('₹3100 Petrol related and paid by HImani And shared by both of us Himani and Namit', c);
+  assert.equal(d.amount, 310000);
+  assert.equal(d.category, 'fuel');
+  assert.deepEqual(d.newNames, [{ id: 'new:himani', name: 'Himani' }]);
+  assert.deepEqual(d.paid, { 'new:himani': 310000 });
+  assert.deepEqual(computeOwed(d.amount, d.split), { 'new:himani': 155000, me: 155000 });
+  assert.equal(d.slots.who, 'ok');
+});
+t('both of us = me and the other person mentioned', () => {
+  const d = P('cab 400 paid by Rahul, shared by both of us');
+  assert.deepEqual(d.paid, { rah: 40000 });
+  assert.deepEqual(Object.keys(d.owed).sort(), ['me', 'rah']);
+  assert.deepEqual(Object.keys(P('lunch 500 hum dono ka, Deepak ne diya').owed).sort(), ['dee', 'me']);
+});
+t('shared by / split by / used by are who owes, not who paid', () => {
+  const d = P('wifi 1000 paid by me shared by Rahul and Priya');
+  assert.deepEqual(d.paid, { me: 100000 });
+  assert.deepEqual(Object.keys(d.owed), ['rah', 'pri']);
+  assert.deepEqual(P('paid by us, dinner 800').paid, { me: 20000, dee: 20000, rah: 20000, pri: 20000 });
+});

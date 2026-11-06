@@ -42,7 +42,7 @@ const RENAME = new Set(['call', 'rename', 'title', 'naam']);
 const ONLY = new Set(['only', 'just', 'alone', 'solo', 'sirf', 'akela']);
 const EQUAL = new Set(['equally', 'evenly', 'equal', 'even', 'barabar']);
 const WAYS = new Set(['ways', 'way', 'people', 'persons', 'person', 'log', 'logo', 'members', 'heads', 'pax']);
-const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole', 'monthly', 'weekly', 'every', 'month', 'week', 'har', 'mahine', 'mahina', 'hafte', 'liye', 'do', 'multiple', 'into', 'like', 'name', 'named', 'called', 'is', 'are', 'am', 'just', 'also', 'will', 'rupaye', 'rupay', 'wala', 'wali', 'thi', 'tha', 'ka', 'mein']);
+const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole', 'monthly', 'weekly', 'every', 'month', 'week', 'har', 'mahine', 'mahina', 'hafte', 'liye', 'do', '__both', 'someone', 'somebody', 'anyone', 'nobody', 'related', 'multiple', 'into', 'like', 'name', 'named', 'called', 'is', 'are', 'am', 'just', 'also', 'will', 'rupaye', 'rupay', 'wala', 'wali', 'thi', 'tha', 'ka', 'mein']);
 // "800 eaten by her", "Priya had 300": consumption verbs mark what someone owes.
 const CONSUME = new Set(['eaten', 'ate', 'eat', 'had', 'consumed', 'used', 'ordered', 'took', 'khaya', 'khaaya', 'khayi', 'piya', 'liya', 'li']);
 // Pronouns point at the last other person named: "500 by her", "usne 300 diye".
@@ -203,6 +203,13 @@ export function parseExpense(text, ctx) {
   const newNames = new Map(); // lower -> display
   const warnings = [];
 
+  // "both of us", "both of them", "hum dono", "dono", "both" -> one marker, never a person name.
+  for (let i = 0; i < toks.length; i++) {
+    const v = toks[i].v, n1 = toks[i + 1]?.v, n2 = toks[i + 2]?.v;
+    if (v === 'both' && n1 === 'of' && (n2 === 'us' || n2 === 'them' || n2 === 'you')) toks.splice(i, 3, { t: 'w', v: '__both' });
+    else if ((v === 'hum' || v === 'ham' || v === 'we') && (n1 === 'dono' || n1 === 'donon' || n1 === 'both')) toks.splice(i, 2, { t: 'w', v: '__both' });
+    else if (v === 'both' || v === 'dono' || v === 'donon') toks[i] = { t: 'w', v: '__both' };
+  }
   // Pass 1: collapse person spans into single tokens.
   const T = [];
   for (let i = 0; i < toks.length; ) {
@@ -274,7 +281,7 @@ export function parseExpense(text, ctx) {
 
   // Pass 2: state machine.
   let total = null, ways = null, ratio = null, only = false, equal = false, withFlag = false, payNext = null;
-  let overrideAt = -9, descOverride = null;
+  let overrideAt = -9, descOverride = null, both = false;
   const added = [];
   let mode = 'n';
   const payers = []; // {id, amt|null}
@@ -371,7 +378,14 @@ export function parseExpense(text, ctx) {
       mode = 'n';
       continue;
     }
-    if (w === 'by' && next?.t === 'p') { mode = 'pay'; continue; }
+    if (w === '__both') { both = true; if (mode !== 'pay') mode = 'owe'; continue; }
+    if (w === 'by' && (next?.t === 'p' || next?.v === '__both')) {
+      // "shared by", "split by", "eaten by", "used by" name who owes; plain "by Rahul" names the payer.
+      const pv = prev?.t === 'w' ? prev.v : '';
+      if (SPLIT.has(pv) || CONSUME.has(pv) || WITH.has(pv) || pv === 'used') mode = 'owe';
+      else mode = 'pay';
+      continue;
+    }
     if (SPLIT.has(w)) { mode = 'owe'; if (pending.length) { /* "me and rahul split", "mere aur Deepak ke beech" */ pending.splice(0).forEach(addOwed); } continue; }
     if (WITH.has(w)) { mode = 'owe'; withFlag = true; continue; }
     if (FOR.has(w)) { if (next?.t === 'p') mode = 'owe'; else descToks.push(t); continue; }
@@ -406,6 +420,8 @@ export function parseExpense(text, ctx) {
     // when they said "paid"; otherwise default payer is me.
     addPayer(ctx.defaultPayer || me);
   }
+  const star = payers.findIndex((p) => p.id === '*');
+  if (star >= 0) payers.splice(star, 1, ...members.filter((m) => !findPayer(m)).map((id) => ({ id, amt: null })));
   const knownPaid = payers.reduce((s, p) => s + (p.amt || 0), 0);
   if (total == null) {
     total = knownPaid || owed.reduce((s, o) => s + (o.amt || 0), 0) || null;
@@ -437,7 +453,7 @@ export function parseExpense(text, ctx) {
   if ((withFlag || (pending.length && !only && !owed.some((o) => o.amt != null || o.pct != null))) && !only) payers.forEach((p) => { if (!findOwed(p.id)) owed.push({ id: p.id, amt: null, pct: null }); });
   let partIds = owed.map((o) => o.id).filter((id) => !excluded.has(id));
 
-  const peopleExplicit = hasOwedInfo || !!ways || excluded.size > 0 || !!ratio || added.length > 0;
+  const peopleExplicit = hasOwedInfo || !!ways || excluded.size > 0 || !!ratio || added.length > 0 || both;
   if (!hasOwedInfo) {
     if (ways) {
       if (members.length === ways) partIds = members.slice();
@@ -448,6 +464,14 @@ export function parseExpense(text, ctx) {
       }
     } else if (ratio && payers.length === ratio.length && payers.length > 1) partIds = payers.map((p) => p.id);
     else partIds = members.filter((m) => !excluded.has(m));
+  }
+  if (both) {
+    const named = owed.map((o) => o.id).filter((id) => id !== '*');
+    if (named.length >= 2) partIds = named;
+    else {
+      const other = [...named, ...payers.map((p) => p.id), ...T.filter((t) => t.t === 'p').map((t) => t.v)].find((id) => id !== me && id !== '*');
+      partIds = other ? [me, other] : [me];
+    }
   }
   for (const id of added) if (!partIds.includes(id) && !excluded.has(id)) partIds.push(id);
   partIds = partIds.filter((id) => !excluded.has(id));
