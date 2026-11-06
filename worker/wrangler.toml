@@ -1,0 +1,11 @@
+name = "hisaab-sync"
+main = "index.js"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "GROUPS"
+class_name = "GroupDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GroupDO"]

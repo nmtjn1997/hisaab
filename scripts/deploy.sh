@@ -10,6 +10,7 @@ git add -A
 git commit -q --no-verify -m "${1:-Update}" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" || true
 GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p') git push -q origin main
 out=$(mktemp -d)
-rsync -a --exclude .git --exclude .claude --exclude tests --exclude scripts --exclude package.json ./ "$out/"
+(cd worker && wrangler deploy 2>&1 | grep -E 'Deployed|error' || true)
+rsync -a --exclude worker --exclude .git --exclude .claude --exclude tests --exclude scripts --exclude package.json ./ "$out/"
 wrangler pages deploy "$out" --project-name hisaab --branch main --commit-dirty=true 2>&1 | tail -1
 rm -rf "$out"

@@ -2,6 +2,8 @@ import * as S from './store.js';
 import { fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balances } from './money.js';
 import { parseExpense, findPeople, assignItems, CATEGORIES } from './parse.js';
 import { icon, catIcon } from './icons.js';
+import * as Sync from './sync.js';
+import { FLAGS, loadFlagDefaults, flagDefault } from './flags.js';
 import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows } from './share.js';
 
 // ---------- tiny helpers ----------
@@ -11,7 +13,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const st = () => S.state;
 const cur = () => st().settings.cur || '₹';
 const money = (p) => fmt(p, cur());
-const buzz = () => navigator.vibrate?.(8);
+const flag = (k) => S.state.settings.flags?.[k] ?? flagDefault(k);
+const buzz = () => flag('haptics') && navigator.vibrate?.(8);
 const hue = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
 const initials = (n) => String(n).trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 const av = (id, cls = '') => { const p = S.person(id); return `<span class="av ${cls}" style="--h:${hue(p.name)}" aria-hidden="true">${esc(initials(p.name))}</span>`; };
@@ -151,25 +154,69 @@ function ensureEveryday() {
 
 // ---------- speech ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-function listen(onText) {
+// Voice: keeps listening through short pauses. Stops ~3s after the last word once an amount
+// is heard, waits longer (~6s) while the amount is still missing, and always on Done.
+function listen(onText, gid) {
   if (!SR) { toast('Voice input is not supported here. Use the mic on your keyboard.'); return; }
-  const r = new SR();
-  r.lang = 'en-IN';
-  r.interimResults = true;
-  r.continuous = false;
-  r.maxAlternatives = 1;
+  const g = gid || st().lastGroup;
+  const members = g && st().groups[g] ? memberList(g) : [st().me];
+  const check = (t) => { try { return parseExpense(t, { people: peopleArr(), members, me: st().me }); } catch { return null; } };
   const ov = document.createElement('div');
   ov.className = 'listen';
-  ov.innerHTML = `<div class="orb">${icon('mic', 'lg')}</div><div class="said" aria-live="polite">Listening…</div><p class="muted small" style="max-width:320px">Try “Dinner 1200 paid by Rahul, split with me and Priya”</p><div class="btns" style="margin-top:20px;width:100%;max-width:320px"><button class="btn" data-c>Cancel</button><button class="btn primary" data-d>Done</button></div>`;
+  ov.innerHTML = `<div class="orb">${icon('mic', 'lg')}</div><div class="said" aria-live="polite">Listening…</div><div class="preview" id="lvp" style="justify-content:center;max-width:420px"></div><p class="muted small" id="lvh" style="max-width:320px">Try “Dinner 1200 paid by Rahul, split with me and Priya”</p><div class="btns" style="margin-top:20px;width:100%;max-width:320px"><button class="btn" data-c>Cancel</button><button class="btn primary" data-d>Done</button></div>`;
   document.body.appendChild(ov);
-  let text = '', cancelled = false, finished = false;
-  const end = () => { if (finished) return; finished = true; ov.remove(); if (!cancelled && text.trim()) onText(text.trim()); };
-  ov.querySelector('[data-c]').onclick = () => { cancelled = true; try { r.abort(); } catch {} end(); };
-  ov.querySelector('[data-d]').onclick = () => { try { r.stop(); } catch {} setTimeout(end, 400); };
-  r.onresult = (e) => { text = [...e.results].map((x) => x[0].transcript).join(' '); ov.querySelector('.said').textContent = text; };
-  r.onerror = (e) => { if (e.error === 'not-allowed') toast('Allow microphone access to use voice'); else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('Voice error: ' + e.error); cancelled = !text; end(); };
-  r.onend = end;
-  try { r.start(); buzz(); } catch { end(); }
+  let finals = '', interim = '', cancelled = false, finished = false, stopping = false, timer = null, r = null;
+  const started = Date.now();
+  const text = () => (finals + ' ' + interim).replace(/\s+/g, ' ').trim();
+  const end = () => {
+    if (finished) return;
+    finished = true; clearTimeout(timer);
+    try { r?.abort(); } catch {}
+    ov.remove();
+    if (!cancelled && text()) onText(text());
+  };
+  const arm = () => {
+    clearTimeout(timer);
+    const d = text() ? check(text()) : null;
+    const wait = !text() ? 9000 : d?.amount != null ? flag('voiceQuickStop') ? 2500 : 3500 : 6500;
+    timer = setTimeout(() => { stopping = true; try { r?.stop(); } catch {} setTimeout(end, 350); }, wait);
+    const hint = ov.querySelector('#lvh');
+    if (d) {
+      const tags = [];
+      if (d.amount != null) tags.push(`<span class="tag a">${money(d.amount)}</span>`); else tags.push('<span class="tag w">amount?</span>');
+      tags.push(`<span class="tag">${esc(d.desc)}</span>`);
+      const nm = (id) => esc(id.startsWith('new:') ? d.newNames.find((n) => n.id === id)?.name || id.slice(4) : S.firstName(id));
+      tags.push(`<span class="tag">paid by ${Object.keys(d.paid).map(nm).join(', ') || 'you'}</span>`);
+      tags.push(`<span class="tag">${Object.keys(d.split.parts).length} sharing</span>`);
+      ov.querySelector('#lvp').innerHTML = tags.join('');
+      hint.textContent = d.amount != null ? 'Got it. Keep talking to add who paid or who shares, or pause to finish.' : 'Still need the amount…';
+    }
+  };
+  const start = () => {
+    r = new SR();
+    r.lang = 'en-IN';
+    r.interimResults = true;
+    r.continuous = true;
+    r.onresult = (e) => {
+      interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finals += ' ' + e.results[i][0].transcript;
+        else interim += ' ' + e.results[i][0].transcript;
+      }
+      ov.querySelector('.said').textContent = text();
+      arm();
+    };
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { toast('Allow microphone access to use voice'); cancelled = !text(); end(); }
+      else if (e.error === 'network') { toast('Voice needs internet. Type it instead.'); end(); }
+    };
+    // Browsers end recognition on their own after a pause; restart while we still want to listen.
+    r.onend = () => { if (finished) return; if (stopping) return end(); finals = text(); interim = ''; if (Date.now() - started < 60000) { try { start(); } catch { end(); } } else end(); };
+    try { r.start(); } catch { end(); }
+  };
+  ov.querySelector('[data-c]').onclick = () => { cancelled = true; end(); };
+  ov.querySelector('[data-d]').onclick = () => { stopping = true; clearTimeout(timer); try { r?.stop(); } catch {} setTimeout(end, 350); };
+  start(); arm(); buzz();
 }
 
 // ---------- router ----------
@@ -195,6 +242,7 @@ const routes = [
   [/^\/stats$/, viewStats],
   [/^\/settings$/, viewSettings],
   [/^\/import\/([\w-]+)$/, viewImport],
+  [/^\/join\/([\w-]+)~([\w-]+)$/, viewJoin],
 ];
 let current = '';
 function parseHash() {
@@ -207,7 +255,7 @@ async function render() {
   closeSheet?.();
   const { path, q } = parseHash();
   Q = q;
-  if (!st().me && !/^\/(welcome|demo|import\/)/.test(path)) { sessionStorage.setItem('after-welcome', location.hash); return go('/welcome'); }
+  if (!st().me && !/^\/(welcome|demo|import\/|join\/)/.test(path)) { sessionStorage.setItem('after-welcome', location.hash); return go('/welcome'); }
   let v = null;
   for (const [re, fn] of routes) {
     const m = path.match(re);
@@ -223,9 +271,10 @@ async function render() {
     ? `<a class="icon-btn" href="#${v.back}" aria-label="Back" data-back>${icon('back')}</a><h1>${esc(v.title)}</h1>${v.actions || ''}`
     : `<div class="brand" style="flex:1"><span class="logo">h</span><h1>${esc(v.title || 'Hisaab')}</h1></div>${v.actions || ''}`;
   const tab = v.tab || '';
+  nav.style.gridTemplateColumns = `repeat(${flag('insights') ? 5 : 4}, 1fr)`;
   nav.innerHTML = [
     ['home', '/', 'home', 'Home'], ['groups', '/groups', 'users', 'Groups'], ['add', '/add', 'plus', 'Add'], ['people', '/people', 'user', 'People'], ['stats', '/stats', 'chart', 'Insights'],
-  ].map(([k, h, ic, l]) => k === 'add'
+  ].filter(([k]) => k !== 'stats' || flag('insights')).map(([k, h, ic, l]) => k === 'add'
     ? `<a href="#/add${st().lastGroup ? '?g=' + st().lastGroup : ''}" aria-label="Add expense"><span class="fab">${icon(ic)}</span></a>`
     : `<a href="#${h}" ${tab === k ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l}</span></a>`).join('');
   view.innerHTML = v.html;
@@ -243,7 +292,44 @@ document.addEventListener('click', (e) => {
   if (b && navDepth > 0) { e.preventDefault(); navDepth -= 2; history.back(); }
 });
 
+// Push local edits of live groups shortly after they happen.
+const liveSig = (gid) => { const g = st().groups[gid]; let m = g.nameAt || 0; for (const e of Object.values(st().expenses)) if (e.gid === gid && e.updatedAt > m) m = e.updatedAt; return m + ':' + g.members.length; };
+let pushT;
+function schedulePush() {
+  clearTimeout(pushT);
+  pushT = setTimeout(() => {
+    for (const g of Object.values(st().groups)) {
+      if (!g.live?.key || g.deleted) continue;
+      const sig = liveSig(g.id);
+      if (sig !== g.live.sig) Sync.sync(g.id).then((r) => { if (r.ok) g.live.sig = liveSig(g.id); if (r.changed) refreshIfShowing(g.id); });
+    }
+  }, 1200);
+}
+function refreshIfShowing(gid) {
+  const { path } = parseHash();
+  if (closeSheet || /^\/(add|e\/\w+\/edit)/.test(path)) return;
+  if (path === '/' || path.startsWith('/g/' + gid) || path.startsWith('/e/') || path === '/people' || path.startsWith('/p/')) render();
+}
+let pollT;
+function pollLive(gid) {
+  clearInterval(pollT);
+  if (!st().groups[gid]?.live?.key) return;
+  const tick = () => { if (document.visibilityState === 'visible') Sync.sync(gid, { push: liveSig(gid) !== st().groups[gid].live.sig }).then((r) => { if (r.ok) st().groups[gid].live.sig = liveSig(gid); if (r.changed) refreshIfShowing(gid); updateLiveChip(gid); }); };
+  tick();
+  pollT = setInterval(() => { if (!location.hash.startsWith('#/g/' + gid)) return clearInterval(pollT); tick(); }, 15000);
+}
+function updateLiveChip(gid) {
+  const el = $('#livechip');
+  const l = st().groups[gid]?.live;
+  if (!el || !l) return;
+  el.textContent = l.error ? l.error : l.syncedAt ? 'Live · synced' : 'Live · syncing…';
+  el.classList.toggle('w', !!l.error);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Object.values(st().groups).filter((g) => g.live?.key && !g.deleted).forEach((g) => Sync.sync(g.id, { push: liveSig(g.id) !== g.live.sig }).then((r) => { if (r.ok) g.live.sig = liveSig(g.id); if (r.changed) refreshIfShowing(g.id); })); });
+addEventListener('online', schedulePush);
+
 S.onChange((why) => {
+  if (why !== 'external' && why !== 'quota') schedulePush();
   if (why === 'external') render();
   if (why === 'quota') toast('Storage is full. Export a backup and delete old receipts.');
 });
@@ -262,7 +348,7 @@ function viewWelcome() {
       <form id="wf" style="margin-top:16px">
         <label class="field"><span>Your name</span><input class="input" name="n" required maxlength="40" autocomplete="given-name" placeholder="e.g. Namit" autofocus></label>
         <button class="btn primary block" type="submit">Get started ${icon('right', 'sm')}</button>
-        <button class="btn ghost block" type="button" id="demo" style="margin-top:8px">${icon('sparkle', 'sm')} Look around with a sample trip</button>
+        <button class="btn ghost block" type="button" id="demo" ${flag('sampleData') ? '' : 'hidden'} style="margin-top:8px">${icon('sparkle', 'sm')} Look around with a sample trip</button>
       </form>
       <p class="faint small" style="text-align:center;margin-top:14px">Your data stays on this phone. Nothing is uploaded.</p>
     </div>`,
@@ -295,15 +381,15 @@ function viewWelcome() {
 function quickBar(gid) {
   return `<form class="quick" data-quick="${gid || ''}" role="search">
     <input name="q" placeholder="${esc(EXAMPLES[Math.floor(Date.now() / 60000) % EXAMPLES.length])}" aria-label="Describe an expense" enterkeyhint="go" autocomplete="off">
-    <button type="button" class="mic ghost" data-scan="${gid || ''}" aria-label="Scan a bill">${icon('camera')}</button>
-    <button type="button" class="mic" data-mic="${gid || ''}" aria-label="Speak an expense">${icon('mic')}</button>
+    <button type="button" class="mic ghost" ${flag('scan') ? '' : 'hidden'} data-scan="${gid || ''}" aria-label="Scan a bill">${icon('camera')}</button>
+    <button type="button" class="mic" ${flag('voice') ? '' : 'hidden'} data-mic="${gid || ''}" aria-label="Speak an expense">${icon('mic')}</button>
   </form>`;
 }
 function bindQuick(root) {
   $$('[data-quick]', root).forEach((f) => {
     const gid = f.dataset.quick || st().lastGroup || '';
     f.onsubmit = (e) => { e.preventDefault(); const t = f.q.value.trim(); go(`/add?${new URLSearchParams({ g: gid, q: t })}`); };
-    f.querySelector('[data-mic]').onclick = () => listen((t) => go(`/add?${new URLSearchParams({ g: gid, q: t })}`));
+    f.querySelector('[data-mic]').onclick = () => listen((t) => go(`/add?${new URLSearchParams({ g: gid, q: t })}`), gid);
     f.querySelector('[data-scan]').onclick = () => go(`/add?${new URLSearchParams({ g: gid, scan: 1 })}`);
   });
   $$('[data-hint]', root).forEach((b) => (b.onclick = () => { const i = $('[data-quick] input', root); i.value = b.dataset.hint; i.focus(); }));
@@ -331,7 +417,7 @@ function viewHome() {
       <div class="row2"><div class="pill"><span>You get</span><b class="pos">${money(get)}</b></div><div class="pill"><span>You pay</span><b class="neg">${money(pay)}</b></div></div>
     </section>
     ${quickBar('')}
-    <div class="hints">${EXAMPLES.map((x) => `<button class="hint" data-hint="${esc(x)}">${esc(x)}</button>`).join('')}</div>
+    <div class="hints" ${flag('hints') ? '' : 'hidden'}>${EXAMPLES.map((x) => `<button class="hint" data-hint="${esc(x)}">${esc(x)}</button>`).join('')}</div>
     <h2 class="h2">Groups <a href="#/groups">See all</a></h2>
     ${groups.length ? `<div class="list">${groups.slice(0, 5).map((g) => `<a class="row" href="#/g/${g.id}"><span class="av" style="--h:${g.hue}">${esc(initials(g.name))}</span><div class="main"><div class="t">${esc(g.name)}</div><div class="s">${memberList(g.id).length} people</div></div>${netLabel(myGroupNet(g.id))}</a>`).join('')}</div>`
       : `<div class="card empty"><div class="art">${icon('users', 'lg')}</div><h3>No groups yet</h3><p>A trip, a flat, office lunch. Add names only, nobody needs to sign up.</p><button class="btn primary" data-act="newGroup">${icon('plus', 'sm')} New group</button></div>`}
@@ -387,7 +473,7 @@ function viewGroup(gid, tab = 'expenses') {
   const me = st().me;
   const myNet = myGroupNet(gid);
   const total = exps.filter((e) => e.kind !== 'settle').reduce((s, e) => s + e.amount, 0);
-  const tabs = [['expenses', 'Expenses'], ['balances', 'Balances'], ['insights', 'Insights'], ['members', 'People']];
+  const tabs = [['expenses', 'Expenses'], ['balances', 'Balances'], ['insights', 'Insights'], ['members', 'People']].filter(([k]) => k !== 'insights' || flag('insights'));
   let body = '';
   if (tab === 'expenses') {
     const qtxt = (Q.get('s') || '').toLowerCase();
@@ -413,7 +499,10 @@ function viewGroup(gid, tab = 'expenses') {
     body = `<div class="list" style="margin-top:14px">${ids.map((id) => { const p = S.person(id); return `<a class="row" href="#/p/${id}">${av(id)}<div class="main"><div class="t">${esc(S.pname(id))}${id === me ? ' <span class="faint small">(you)</span>' : ''}</div><div class="s">${p.phone ? esc(p.phone) : 'no phone'}${p.upi ? ' · UPI ✓' : ''}</div></div><div class="end ${b[id] > 0 ? 'pos' : b[id] < 0 ? 'neg' : 'faint'}"><div class="v">${b[id] ? money(Math.abs(b[id])) : ''}</div></div></a>`; }).join('')}</div>
       <form class="quick" id="addm" style="margin-top:14px"><input name="n" placeholder="Add people: Amit, Sneha" autocomplete="off" aria-label="Add people"><button class="mic" type="submit" aria-label="Add">${icon('plus')}</button></form>
       <div class="chips" style="margin-top:10px">${peopleArr().filter((p) => !ids.includes(p.id)).slice(0, 12).map((p) => `<button class="chip new" data-act="addMember" data-g="${gid}" data-id="${p.id}">${av(p.id)}${esc(p.name)}</button>`).join('')}</div>
-      <button class="btn block" style="margin-top:16px" data-act="inviteGroup" data-g="${gid}">${icon('link', 'sm')} Share a live copy link</button>
+      ${hasContacts() ? `<button class="btn block" style="margin-top:10px" data-act="contactsToGroup" data-g="${gid}">${icon('phone', 'sm')} Add from contacts</button>` : ''}
+      ${flag('liveGroups') && ids.length > 1 ? `<h2 class="h2">Invite to join</h2><p class="faint small" style="margin:-4px 4px 10px">They open the link, see every expense and can add their own. No sign-up.</p>
+      <div class="chips">${ids.filter((id) => id !== me).map((id) => `<button class="chip" data-act="invitePerson" data-g="${gid}" data-id="${id}">${av(id)}${esc(S.firstName(id))} ${icon(S.person(id).phone ? 'whatsapp' : 'share', 'sm')}</button>`).join('')}</div>` : ''}
+      <button class="btn block" style="margin-top:16px" data-act="inviteGroup" data-g="${gid}">${icon('link', 'sm')} ${flag('liveGroups') ? 'Share the group link' : 'Share a copy of this group'}</button>
       <p class="faint small" style="margin:8px 4px">People do not need to join. Add names, track everything yourself, and share a summary or link when you want.</p>`;
   }
   return {
@@ -421,11 +510,13 @@ function viewGroup(gid, tab = 'expenses') {
     actions: `<button class="icon-btn" data-act="shareGroup" data-g="${gid}" aria-label="Share">${icon('share')}</button><button class="icon-btn" data-act="groupMenu" data-g="${gid}" aria-label="Group options">${icon('more')}</button>`,
     html: `${g.sample ? `<div class="note" style="margin:4px 0 12px;align-items:center">${icon('sparkle', 'sm')}<span style="flex:1">Sample trip to look around. Delete it when you are ready.</span><button class="btn sm" data-act="delSample" data-g="${gid}">Delete</button></div>` : ''}<section class="hero" style="padding:16px 18px">
         <div style="display:flex;align-items:center;gap:12px"><span class="av lg" style="--h:${g.hue}">${esc(initials(g.name))}</span><div style="flex:1;min-width:0"><div class="small muted" style="font-weight:600">${myNet > 0 ? 'You get back' : myNet < 0 ? 'You owe' : 'You are'}</div><div style="font:800 28px var(--display);letter-spacing:-.02em" class="${myNet > 0 ? 'pos' : myNet < 0 ? 'neg' : ''} num">${myNet ? money(Math.abs(myNet)) : 'settled up'}</div></div><div style="text-align:right"><div class="small muted" style="font-weight:600">Total spend</div><div style="font:700 17px var(--display)" class="num">${money(total)}</div></div></div>
+        ${g.live?.key ? `<div style="margin-top:12px;display:flex;gap:8px;align-items:center"><span class="tag a" id="livechip">${g.live.error ? esc(g.live.error) : 'Live'}</span><span class="faint small">Everyone with the link sees changes</span></div>` : ''}
       </section>
       <nav class="seg" style="margin-top:14px" aria-label="Group sections">${tabs.map(([k, l]) => `<a href="#/g/${gid}${k === 'expenses' ? '' : '/' + k}" ${tab === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
       ${body}`,
     mount(v) {
       bindQuick(v);
+      pollLive(gid);
       const gs = $('#gs', v);
       if (gs) { let t; gs.oninput = () => { clearTimeout(t); t = setTimeout(() => { history.replaceState(null, '', `#/g/${gid}${gs.value ? '?s=' + encodeURIComponent(gs.value) : ''}`); const pos = gs.selectionStart; render().then(() => { const n = $('#gs'); n?.focus(); n?.setSelectionRange(pos, pos); }); }, 200); }; }
       const am = $('#addm', v);
@@ -437,12 +528,12 @@ function viewGroup(gid, tab = 'expenses') {
 function transferCard(t, gid) {
   const me = st().me;
   const to = S.person(t.to), from = S.person(t.from);
-  const canUpi = t.from === me && to.upi;
+  const canUpi = flag('upi') && t.from === me && to.upi;
   return `<div class="card" style="padding:14px">
     <div style="display:flex;align-items:center;gap:10px">${av(t.from, 'sm')}<span class="small"><b>${esc(S.pname(t.from))}</b> ${t.from === me ? 'pay' : 'pays'} <b>${esc(S.pname(t.to))}</b></span><span style="flex:1"></span><b class="num" style="font:700 17px var(--display)">${money(t.amount)}</b></div>
     <div class="btns" style="margin-top:12px">
       ${canUpi ? `<a class="btn sm primary" href="${esc(upiLink({ upi: to.upi, name: to.name, amount: t.amount, note: st().groups[gid]?.name }))}">${icon('wallet', 'sm')} Pay via UPI</a>` : ''}
-      ${t.from !== me ? `<button class="btn sm" data-act="remind" data-from="${t.from}" data-to="${t.to}" data-amt="${t.amount}" data-g="${gid}">${icon('bell', 'sm')} Remind</button>` : ''}
+      ${t.from !== me && flag('whatsapp') ? `<button class="btn sm" data-act="remind" data-from="${t.from}" data-to="${t.to}" data-amt="${t.amount}" data-g="${gid}">${icon('bell', 'sm')} Remind</button>` : ''}
       <button class="btn sm ${canUpi ? '' : 'primary'}" data-act="settle" data-from="${t.from}" data-to="${t.to}" data-amt="${t.amount}" data-g="${gid}">${icon('check', 'sm')} Mark paid</button>
     </div>
     ${t.from !== me && !from.phone ? '' : ''}
@@ -532,8 +623,8 @@ function viewPerson(id) {
         <div class="muted small">${[p.phone, p.upi].filter(Boolean).map(esc).join(' · ') || (isMe ? 'Add your UPI ID so friends can pay you' : 'Add a phone number for WhatsApp reminders')}</div>
         ${isMe ? '' : `<div class="big ${net > 0 ? 'pos' : net < 0 ? 'neg' : ''}" style="margin-top:12px;font-size:34px">${net ? money(Math.abs(net)) : 'All square'}</div><div class="muted small">${net > 0 ? `${esc(p.name.split(' ')[0])} owes you` : net < 0 ? `you owe ${esc(p.name.split(' ')[0])}` : ''}</div>`}
         ${!isMe && net ? `<div class="btns" style="margin-top:14px">
-          ${net < 0 && p.upi ? `<a class="btn primary" href="${esc(upiLink({ upi: p.upi, name: p.name, amount: -net }))}">${icon('wallet', 'sm')} Pay UPI</a>` : ''}
-          ${net > 0 ? `<button class="btn" data-act="remindPerson" data-id="${id}">${icon('bell', 'sm')} Remind</button>` : ''}
+          ${net < 0 && p.upi && flag('upi') ? `<a class="btn primary" href="${esc(upiLink({ upi: p.upi, name: p.name, amount: -net }))}">${icon('wallet', 'sm')} Pay UPI</a>` : ''}
+          ${net > 0 && flag('whatsapp') ? `<button class="btn" data-act="remindPerson" data-id="${id}">${icon('bell', 'sm')} Remind</button>` : ''}
           <button class="btn ${net < 0 && p.upi ? '' : 'primary'}" data-act="settleAll" data-id="${id}">${icon('check', 'sm')} Settle up</button></div>` : ''}
         ${isMe ? `<button class="btn" style="margin-top:12px" data-act="editPerson" data-id="${id}">${icon('edit', 'sm')} Edit profile & UPI</button>` : ''}
       </section>
@@ -558,7 +649,7 @@ function personSheet(id, onDone) {
       if (upi && !/^[\w.\-]{2,}@[a-z][a-z0-9.]{1,}$/i.test(upi)) { toast('That UPI ID looks wrong (like name@bank)'); return; }
       const data = { name: f.name.value.trim().slice(0, 40), phone: f.phone.value.replace(/[^\d+]/g, '').slice(0, 15), upi };
       let pid = id;
-      if (id) Object.assign(st().people[id], data); else pid = S.addPerson(data.name, data);
+      if (id) Object.assign(st().people[id], data, { updatedAt: Date.now() }); else pid = S.addPerson(data.name, data);
       S.save();
       close();
       onDone ? onDone(pid) : render();
@@ -600,7 +691,7 @@ function viewExpense(id) {
       ${e.receiptId ? `<h2 class="h2">Bill</h2><div id="rimg"><div class="sk" style="height:220px;border-radius:14px"></div></div>` : ''}
       ${e.text ? `<p class="faint small" style="margin:14px 4px">Added from: “${esc(e.text)}”</p>` : ''}
       ${e.deleted ? '' : `<div class="btns" style="margin-top:18px">
-        ${settle ? '' : `<button class="btn" data-act="notifyBill" data-id="${id}">${icon('whatsapp', 'sm')} Share bill</button>`}
+        ${settle || !flag('whatsapp') ? '' : `<button class="btn" data-act="notifyBill" data-id="${id}">${icon('whatsapp', 'sm')} Share bill</button>`}
         <button class="btn danger" data-act="delExpense" data-id="${id}">${icon('trash', 'sm')} Delete</button></div>`}
       <p class="faint small" style="margin:14px 4px">Added ${new Date(e.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}${e.updatedAt - e.createdAt > 2000 ? ' · edited ' + new Date(e.updatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}${e.imported ? ' · imported' : ''}</p>`,
     async mount(v) {
@@ -709,16 +800,16 @@ function viewAdd(editId) {
     ${editing?.kind === 'settle' ? '' : `<div class="smart">
       <textarea id="smart" rows="2" placeholder="Say or type it: “Pizza 900 paid by Deepak, split with me and Rahul”" aria-label="Describe the expense">${esc(draft.text)}</textarea>
       <div class="bar">
-        <button class="btn sm" data-act="scan">${icon('camera', 'sm')} Scan bill</button>
+        <button class="btn sm" data-act="scan" ${flag('scan') ? '' : 'hidden'}>${icon('camera', 'sm')} Scan bill</button>
         <span class="sp"></span>
         ${draft.text ? `<button class="icon-btn" data-act="clearSmart" aria-label="Clear">${icon('x', 'sm')}</button>` : ''}
-        <button class="mic" data-act="speak" aria-label="Speak">${icon('mic')}</button>
+        <button class="mic" data-act="speak" aria-label="Speak" ${flag('voice') ? '' : 'hidden'}>${icon('mic')}</button>
       </div>
       <div class="preview" id="pv"></div>
     </div>
     <input type="file" id="file" accept="image/*" capture="environment" hidden>
     <div id="scanbox"></div>
-    ${draft.text || draft.scan || editing ? '' : `<p class="faint small" id="samplehint" style="margin:8px 4px 0">No bill handy? <button class="link" style="background:none;border:0;padding:0;text-decoration:underline;cursor:pointer" data-act="sampleBill">Try a sample bill</button></p>`}`}
+    ${draft.text || draft.scan || editing || !flag('scan') ? '' : `<p class="faint small" id="samplehint" style="margin:8px 4px 0">No bill handy? <button class="link" style="background:none;border:0;padding:0;text-decoration:underline;cursor:pointer" data-act="sampleBill">Try a sample bill</button></p>`}`}
     <div id="form"></div>
     <div class="sticky-cta"><button class="btn primary block" id="save" style="min-height:54px;font-size:17px"></button><div id="probs" class="small neg" style="text-align:center;margin-top:6px;min-height:20px" aria-live="polite"></div></div>
     `,
@@ -1028,6 +1119,49 @@ async function viewImport(code) {
   };
 }
 
+// ---------- join a live group ----------
+async function viewJoin(gid, key) {
+  const local = st().groups[gid];
+  if (local && !local.deleted && local.live?.key === key) { history.replaceState(null, '', '#/g/' + gid); return viewGroup(gid); }
+  let d;
+  try { d = await Sync.peek(gid, key); } catch (e) { return { title: 'Join group', back: '/', html: `<div class="empty"><div class="art">${icon('link', 'lg')}</div><h3>Could not open this group</h3><p>${esc(e.message)}</p></div>` }; }
+  const ppl = d.members.map((id) => ({ id, name: d.people[id]?.name || '?' }));
+  const total = Object.values(d.expenses).filter((x) => !x.deleted && x.kind !== 'settle').reduce((s, x) => s + x.amount, 0);
+  const myName = st().me ? S.person(st().me).name.toLowerCase() : '';
+  let pick = (Q.get('as') && d.members.includes(Q.get('as')) ? Q.get('as') : null) || ppl.find((p) => p.name.toLowerCase() === myName)?.id || null;
+  return {
+    title: 'Join group', back: '/', nav: false,
+    html: `<section class="hero" style="margin-top:8px"><div class="muted small" style="font-weight:600">You are invited to a live group</div><div style="font:800 28px var(--display);margin-top:4px">${esc(d.name)}</div><div class="muted small">${ppl.length} people · ${money(total)} spent</div></section>
+      <h2 class="h2">Which one is you?</h2>
+      <div class="chips" id="who">${ppl.map((p) => `<button class="chip" data-id="${esc(p.id)}" aria-pressed="${p.id === pick}">${avName(p.name)}${esc(p.name)}</button>`).join('')}</div>
+      <label class="field" style="margin-top:14px"><span>Not listed? Your name</span><input class="input" id="myname" maxlength="40" placeholder="Your name" value="${st().me && !pick ? esc(S.person(st().me).name) : ''}"></label>
+      <button class="btn primary block" style="margin-top:12px" id="join">${icon('check', 'sm')} Join group</button>
+      <p class="faint small" style="margin:10px 4px">Anyone with this link can see and add expenses in this group. Your other groups stay private on your phone.</p>`,
+    mount(v) {
+      $$('#who .chip', v).forEach((c) => (c.onclick = () => { pick = c.dataset.id; $('#myname', v).value = ''; $$('#who .chip', v).forEach((x) => x.setAttribute('aria-pressed', x === c)); }));
+      $('#join', v).onclick = (e) => busy(e.currentTarget, async () => {
+        const typed = $('#myname', v).value.trim();
+        if (!pick && !typed) { toast('Pick yourself or type your name'); return; }
+        let remoteMe = typed ? null : pick;
+        if (!st().me) {
+          const id = remoteMe || S.uid();
+          st().people[id] = { id, name: remoteMe ? d.people[remoteMe]?.name || typed : typed, phone: '', upi: '', createdAt: Date.now() };
+          st().me = id;
+        }
+        if (!remoteMe) remoteMe = st().me; // new member: they appear under their own id
+        const map = remoteMe !== st().me ? { [remoteMe]: st().me } : {};
+        st().groups[gid] = { id: gid, name: d.name, nameAt: d.nameAt, members: [st().me], createdAt: Date.now(), simplify: true, hue: hue(d.name), live: { key, map } };
+        Sync.apply(gid, d);
+        const r = await Sync.sync(gid);
+        if (r.ok) st().groups[gid].live.sig = liveSig(gid);
+        S.flush();
+        go('/g/' + gid);
+        toast(`Joined ${d.name}`);
+      });
+    },
+  };
+}
+
 // ---------- settings ----------
 let installEvt = null;
 addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; });
@@ -1045,13 +1179,18 @@ function viewSettings() {
       <h2 class="h2">Your data</h2>
       <div class="note" style="margin-bottom:10px">Everything stays on this device (${(bytes / 1024).toFixed(0)} KB). Export a backup now and then, or before changing phones.</div>
       <div class="btns"><button class="btn" data-act="export">${icon('download', 'sm')} Export backup</button><label class="btn">${icon('upload', 'sm')} Restore<input type="file" accept="application/json,.json" id="restore" hidden></label></div>
-      <label class="btn block" style="margin-top:10px">${icon('upload', 'sm')} Import from Splitwise (CSV)<input type="file" accept=".csv,text/csv" id="swcsv" hidden></label>
+      <label class="btn block" style="margin-top:10px" ${flag('splitwiseImport') ? '' : 'hidden'}>${icon('upload', 'sm')} Import from Splitwise (CSV)<input type="file" accept=".csv,text/csv" id="swcsv" hidden></label>
       <p class="faint small" style="margin:6px 4px">In Splitwise: open a group → settings → Export as spreadsheet.</p>
-      <button class="btn ghost block" style="margin-top:10px" data-act="loadSample">${icon('sparkle', 'sm')} Add a sample trip to explore</button>
+      <button class="btn ghost block" style="margin-top:10px" data-act="loadSample" ${flag('sampleData') ? '' : 'hidden'}>${icon('sparkle', 'sm')} Add a sample trip to explore</button>
+      <h2 class="h2">Features</h2>
+      <p class="faint small" style="margin:-4px 4px 10px">Switch parts of the app on or off on this phone. Defaults come from the app.</p>
+      <div class="list">${Object.entries(FLAGS).map(([k, [label, desc]]) => `<div class="row" style="cursor:default"><div class="main"><div class="t">${esc(label)}</div><div class="s" style="white-space:normal">${esc(desc)}</div></div><button class="check" role="switch" data-flag="${k}" aria-checked="${flag(k)}" aria-label="${esc(label)}">${icon('check')}</button></div>`).join('')}</div>
+      ${s.flags && Object.keys(s.flags).length ? `<button class="btn sm ghost" style="margin-top:8px" data-act="resetFlags">Reset to app defaults</button>` : ''}
       <h2 class="h2">Danger zone</h2>
       <button class="btn danger block" data-act="wipe">${icon('trash', 'sm')} Erase everything on this phone</button>
       <p class="faint small" style="text-align:center;margin-top:24px">Hisaab · free, open source, no tracking · <a class="link" href="https://github.com/nmtjn1997/hisaab" target="_blank" rel="noopener">GitHub</a></p>`,
     mount(v) {
+      $$('[data-flag]', v).forEach((b) => (b.onclick = () => { s.flags = { ...(s.flags || {}), [b.dataset.flag]: !flag(b.dataset.flag) }; S.save(); buzz(); render(); }));
       $$('[data-theme-set]', v).forEach((b) => (b.onclick = () => { s.theme = b.dataset.themeSet; S.save(); applyTheme(); render(); }));
       $('#cur', v).onchange = (e) => { s.cur = e.target.value; S.save(); };
       $('#restore', v).onchange = async (e) => {
@@ -1101,6 +1240,22 @@ function applyTheme() {
 }
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
 
+// ---------- live groups ----------
+async function goLive(gid) {
+  const g = st().groups[gid];
+  if (g.live?.key) return;
+  g.live = { key: Sync.newKey(), map: {} };
+  const r = await Sync.sync(gid);
+  if (!r.ok) { delete g.live; S.save(); throw new Error('Could not go live. Check your connection.'); }
+  g.live.sig = liveSig(gid);
+  S.save();
+}
+const hasContacts = () => 'contacts' in navigator && 'select' in (navigator.contacts || {});
+async function pickContacts() {
+  const list = await navigator.contacts.select(['name', 'tel'], { multiple: true });
+  return list.map((c) => ({ name: String(c.name?.[0] || '').trim().slice(0, 40), phone: String(c.tel?.[0] || '').replace(/[^\d+]/g, '').slice(-13) })).filter((c) => c.name);
+}
+
 // ---------- actions ----------
 async function shareText(text, url) {
   if (navigator.share) { try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
@@ -1120,7 +1275,7 @@ const ACT = {
   editPerson: (b) => personSheet(b.dataset.id),
   toggleSimplify: (b) => { const g = st().groups[b.dataset.g]; g.simplify = g.simplify === false; S.save(); render(); },
   addMember: (b) => { const g = st().groups[b.dataset.g]; if (!g.members.includes(b.dataset.id)) g.members.push(b.dataset.id); S.save(); render(); },
-  speak: () => listen((t) => { draft.text = draft.text.trim() ? draft.text.trim() + ', ' + t : t; const ta = $('#smart'); if (ta) ta.value = draft.text; applyParse(); render(); }),
+  speak: () => listen((t) => { draft.text = draft.text.trim() ? draft.text.trim() + ', ' + t : t; const ta = $('#smart'); if (ta) ta.value = draft.text; applyParse(); render(); }, draft?.gid),
   scan: () => $('#file')?.click(),
   sampleBill: async () => { const r = await fetch('assets/sample-bill.jpg'); const b = await r.blob(); scanFile(new File([b], 'sample-bill.jpg', { type: 'image/jpeg' })); },
   clearSmart: () => { const g = draft.gid; draft = { ...newDraft(g), key: draft.key }; render(); },
@@ -1210,11 +1365,22 @@ const ACT = {
     const gid = b.dataset.g;
     sheet(`<h3>Share ${esc(st().groups[gid].name)}</h3>
       <div class="list">
-        <button class="row" data-s="wa">${icon('whatsapp')}<div class="main"><div class="t">WhatsApp summary</div><div class="s">Who pays whom, as a message</div></div></button>
-        <button class="row" data-s="link">${icon('link')}<div class="main"><div class="t">Share a copy of this group</div><div class="s">Others open the link and get every expense</div></div></button>
+        ${flag('liveGroups') ? '' : '<template>'}<button class="row" data-s="live">${icon('users')}<div class="main"><div class="t">${st().groups[gid].live?.key ? 'Send the live link' : 'Make it live and share'}</div><div class="s">Friends open it, add expenses, everyone stays in sync</div></div></button>
+        ${flag('liveGroups') ? '' : '</template>'}${flag('whatsapp') ? '' : '<template>'}<button class="row" data-s="wa">${icon('whatsapp')}<div class="main"><div class="t">WhatsApp summary</div><div class="s">Who pays whom, as a message</div></div></button>
+        ${flag('whatsapp') ? '' : '</template>'}<button class="row" data-s="link">${icon('link')}<div class="main"><div class="t">Share a copy of this group</div><div class="s">Others open the link and get every expense</div></div></button>
         <button class="row" data-s="pdf">${icon('file')}<div class="main"><div class="t">PDF report</div><div class="s">Balances, per person totals, all expenses</div></div></button>
       </div>`, (el, close) => {
-      el.querySelector('[data-s=wa]').onclick = () => { close(); const real = S.groupExpenses(gid).filter((e) => e.kind !== 'settle'); shareText(groupSummaryText({ group: st().groups[gid], transfers: transfersFor(gid), totals: { total: real.reduce((s, e) => s + e.amount, 0) }, name: (id) => S.pname(id, false), cur: cur() })); };
+      (el.querySelector('[data-s=live]') || {}).onclick = (e) => busy(e.currentTarget, async () => {
+        const g = st().groups[gid];
+        await goLive(gid);
+        close();
+        render();
+        const url = Sync.liveLink(gid);
+        const text = `Join "${g.name}" on Hisaab to add and see our shared expenses:`;
+        if (navigator.share) { try { await navigator.share({ title: g.name, text, url }); return; } catch (x) { if (x.name === 'AbortError') return; } }
+        open(waLink(text + '\n' + url), '_blank', 'noopener');
+      });
+      (el.querySelector('[data-s=wa]') || {}).onclick = () => { close(); const real = S.groupExpenses(gid).filter((e) => e.kind !== 'settle'); shareText(groupSummaryText({ group: st().groups[gid], transfers: transfersFor(gid), totals: { total: real.reduce((s, e) => s + e.amount, 0) }, name: (id) => S.pname(id, false), cur: cur() })); };
       el.querySelector('[data-s=link]').onclick = (e) => busy(e.currentTarget, async () => {
         const url = await groupLink(gid);
         close();
@@ -1226,17 +1392,34 @@ const ACT = {
     });
   },
   inviteGroup: (b) => ACT.shareGroup(b),
+  invitePerson: (b) => busy(b, async () => {
+    const { g: gid, id } = b.dataset;
+    await goLive(gid);
+    const g = st().groups[gid], p = S.person(id);
+    const url = Sync.liveLink(gid) + '?as=' + encodeURIComponent(Sync.remoteId(gid, id));
+    const text = `Hi ${p.name.split(' ')[0]}, I added you to "${g.name}" on Hisaab. Open this to see our expenses and add yours:`;
+    if (p.phone) open(waLink(text + '\n' + url, p.phone), '_blank', 'noopener'); else await shareText(text, url);
+    render();
+  }),
+  contactsToGroup: (b) => busy(b, async () => {
+    const g = st().groups[b.dataset.g];
+    const picked = await pickContacts();
+    for (const c of picked) { const id = S.addPerson(c.name, c.phone ? { phone: c.phone } : {}); if (c.phone && !S.person(id).phone) S.person(id).phone = c.phone; if (!g.members.includes(id)) g.members.push(id); }
+    S.save(); render();
+    if (picked.length) toast(`Added ${picked.map((c) => c.name.split(' ')[0]).join(', ')}`);
+  }),
   groupMenu: (b) => {
     const g = st().groups[b.dataset.g];
     sheet(`<h3>${esc(g.name)}</h3>
       <form id="rn"><label class="field"><span>Name</span><input class="input" name="n" value="${esc(g.name)}" maxlength="50"></label><button class="btn block">Rename</button></form>
       <div class="btns" style="margin-top:12px"><button class="btn" data-x="arch">${g.archived ? 'Unarchive' : 'Archive'}</button><button class="btn danger" data-x="del">${icon('trash', 'sm')} Delete</button></div>`, (el, close) => {
-      $('#rn', el).onsubmit = (e) => { e.preventDefault(); g.name = e.target.n.value.trim().slice(0, 50) || g.name; S.save(); close(); render(); };
+      $('#rn', el).onsubmit = (e) => { e.preventDefault(); g.name = e.target.n.value.trim().slice(0, 50) || g.name; g.nameAt = Date.now(); S.save(); close(); render(); };
       el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; S.save(); close(); go('/groups'); };
       el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Delete ${g.name}?`, 'The group and its expenses disappear from your lists. You can undo right after.', 'Delete', () => { g.deleted = true; S.save(); go('/groups'); toast('Group deleted', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); }); };
     });
   },
   print: () => print(),
+  resetFlags: () => { delete st().settings.flags; S.save(); render(); },
   delSample: (b) => { const g = st().groups[b.dataset.g]; g.deleted = true; S.save(); go('/'); toast('Sample removed', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); },
   loadSample: () => go('/g/' + seedSample()),
   install: async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); },
@@ -1264,7 +1447,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- boot ----------
 applyTheme();
-render();
+loadFlagDefaults().then(render);
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').then((reg) => {
     reg.addEventListener('updatefound', () => {

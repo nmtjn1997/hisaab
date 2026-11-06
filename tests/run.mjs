@@ -191,3 +191,49 @@ t('money format', () => {
   assert.equal(fmt(-5), '-₹0.05');
   assert.equal(fmt(10000000), '₹1,00,000');
 });
+
+t('user case: multi payer, her, eaten by, new name', () => {
+  const c = { people: [{ id: 'me', name: 'Namit' }], members: ['me'], me: 'me', now: ctx.now };
+  const d = parseExpense('2000 bill, splitted into two people namit and himi and paid by multiple people 1500 by me and 500 by her and will also like 800 eaten by her 1200 eaten by me, himi is name', c);
+  assert.equal(d.amount, 200000);
+  assert.equal(d.desc, 'Bill');
+  assert.deepEqual(d.newNames, [{ id: 'new:himi', name: 'Himi' }]);
+  assert.deepEqual(d.paid, { me: 150000, 'new:himi': 50000 });
+  assert.deepEqual(computeOwed(d.amount, d.split), { me: 120000, 'new:himi': 80000 });
+});
+t('person had amount', () => {
+  const d = P('pizza 900 paid by Rahul, Priya had 300, rest me and deepak');
+  assert.equal(d.owed.pri, 30000);
+  assert.equal(d.owed.me + d.owed.dee, 60000);
+});
+t('usne pronoun', () => {
+  const d = P('dinner 1000 Deepak ke saath, usne 600 diye maine 400 diye');
+  assert.deepEqual(d.paid, { dee: 60000, me: 40000 });
+});
+
+import { mergeGroup, cleanGroup } from '../js/merge.js';
+t('merge: newer edit wins, deletes win, members union', () => {
+  const a = { name: 'Trip', nameAt: 1, members: ['x', 'y'], people: {}, expenses: { e1: { id: 'e1', desc: 'old', updatedAt: 1 }, e2: { id: 'e2', desc: 'keep', updatedAt: 5 } } };
+  const b = { name: 'Goa', nameAt: 2, members: ['y', 'z'], people: {}, expenses: { e1: { id: 'e1', desc: 'new', updatedAt: 3 }, e2: { id: 'e2', deleted: true, desc: 'keep', updatedAt: 4 } } };
+  const m = mergeGroup(a, b);
+  assert.equal(m.name, 'Goa');
+  assert.deepEqual(m.members, ['x', 'y', 'z']);
+  assert.equal(m.expenses.e1.desc, 'new');
+  assert.equal(m.expenses.e2.deleted, undefined);
+  assert.deepEqual(mergeGroup(b, a).expenses.e1.desc, 'new');
+});
+t('clean: drops bad ids, trims strings, ints only', () => {
+  const c = cleanGroup({ name: 'x'.repeat(99), members: ['ok', 'bad id!'], people: { '<x>': { name: 'h' } }, expenses: { e1: { id: 'e1', desc: '<b>hi</b>', amount: '12.7', paid: { a: 5, 'b c': 3 }, owed: {} } } });
+  assert.equal(c.name.length, 50);
+  assert.deepEqual(c.members, ['ok']);
+  assert.deepEqual(c.people, {});
+  assert.equal(c.expenses.e1.amount, 13);
+  assert.deepEqual(c.expenses.e1.paid, { a: 5 });
+});
+
+t('unknown first name in a list after split into', () => {
+  const c = { people: [{ id: 'me', name: 'You' }], members: ['me'], me: 'me', now: ctx.now };
+  const d = parseExpense('2000 bill, splitted into two people namit and himi', c);
+  assert.equal(d.desc, 'Bill');
+  assert.deepEqual(d.newNames.map((n) => n.name), ['Namit', 'Himi']);
+});

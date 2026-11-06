@@ -1,0 +1,13 @@
+{
+  "voice": true,
+  "voiceQuickStop": true,
+  "scan": true,
+  "liveGroups": true,
+  "upi": true,
+  "whatsapp": true,
+  "insights": true,
+  "hints": true,
+  "sampleData": true,
+  "splitwiseImport": true,
+  "haptics": true
+}

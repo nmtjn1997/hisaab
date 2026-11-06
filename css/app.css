@@ -244,3 +244,4 @@ textarea.input { resize: none; min-height: 84px; line-height: 1.45; }
 .no-nav .toast { bottom: calc(90px + var(--safe-b)); }
 .check[aria-checked="false"] svg { opacity: 0; }
 .toast button { background: var(--accent) !important; color: var(--on-accent) !important; border-radius: 9px; padding: 6px 12px !important; }
+.tag { white-space: nowrap; }

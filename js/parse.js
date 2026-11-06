@@ -36,7 +36,11 @@ const EXCEPT = new Set(['except', 'excluding', 'exclude', 'without', 'minus', 'n
 const ONLY = new Set(['only', 'just', 'alone', 'solo', 'sirf', 'akela']);
 const EQUAL = new Set(['equally', 'evenly', 'equal', 'even', 'barabar']);
 const WAYS = new Set(['ways', 'way', 'people', 'persons', 'person', 'log', 'logo', 'members', 'heads', 'pax']);
-const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole', 'liye', 'do', 'rupaye', 'rupay', 'wala', 'wali', 'thi', 'tha', 'ka', 'mein']);
+const STOP = new Set(['a', 'an', 'the', 'of', 'at', 'in', 'to', 'and', 'or', 'is', 'was', 'it', 'this', 'that', 'by', 'rs', 'inr', 'rupees', 'rupee', 'bucks', 'total', 'amount', 'bill', 'cost', 'costs', 'costing', 'worth', 'today', 'yesterday', 'tomorrow', 'day', 'before', 'last', 'on', 'so', 'then', 'also', 'each', 'per', 'please', 'add', 'expense', 'ka', 'ki', 'ke', 'ko', 'ne', 'se', 'hai', 'tha', 'aur', 'friends', 'friend', 'family', 'them', 'they', 'he', 'she', 'his', 'her', 'their', 'our', 'you', 'your', 'got', 'had', 'have', 'has', 'from', 'did', 'do', 'will', 'should', 'would', 'owe', 'owes', 'lent', 'borrowed', 'remaining', 'rest', 'other', 'others', 'half', 'full', 'whole', 'liye', 'do', 'multiple', 'into', 'like', 'name', 'named', 'called', 'is', 'are', 'am', 'just', 'also', 'will', 'rupaye', 'rupay', 'wala', 'wali', 'thi', 'tha', 'ka', 'mein']);
+// "800 eaten by her", "Priya had 300": consumption verbs mark what someone owes.
+const CONSUME = new Set(['eaten', 'ate', 'eat', 'had', 'consumed', 'used', 'ordered', 'took', 'khaya', 'khaaya', 'khayi', 'piya', 'liya', 'li']);
+// Pronouns point at the last other person named: "500 by her", "usne 300 diye".
+const PRON = new Set(['her', 'him', 'she', 'he', 'usne', 'uska', 'uski', 'use', 'usko', 'unhone', 'unka', 'unki', 'unko']);
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export const CATEGORIES = {
@@ -167,7 +171,7 @@ export function parseExpense(text, ctx) {
   // Unknown words become new people only in name slots, so "for pizza" stays a description.
   const isNameSlotWord = (i) => {
     const w = T[i];
-    if (w?.t !== 'w' || STOP.has(w.v) || CAT_OF[w.v] || PAY.has(w.v) || SPLIT.has(w.v) || WITH.has(w.v) || FOR.has(w.v) || EXCEPT.has(w.v) || ONLY.has(w.v) || EQUAL.has(w.v) || WAYS.has(w.v) || w.v.length < 2 || DAYS.includes(w.v)) return false;
+    if (w?.t !== 'w' || STOP.has(w.v) || CAT_OF[w.v] || PAY.has(w.v) || SPLIT.has(w.v) || WITH.has(w.v) || FOR.has(w.v) || EXCEPT.has(w.v) || ONLY.has(w.v) || EQUAL.has(w.v) || WAYS.has(w.v) || CONSUME.has(w.v) || PRON.has(w.v) || w.v.length < 2 || DAYS.includes(w.v)) return false;
     const prev = T[i - 1], next = T[i + 1];
     const prevV = prev?.v;
     if (prev?.t === 'w' && (prevV === 'by' || prevV === 'between' || prevV === 'among' || prevV === 'amongst' || WITH.has(prevV) || EXCEPT.has(prevV) || ONLY.has(prevV))) return true;
@@ -177,15 +181,26 @@ export function parseExpense(text, ctx) {
     if (next?.t === 'num' && prev?.t === 'p') return true; // "namit 90 deepak 10"
     if (next?.t === 'num' && (prevV === 'and' || prevV === ',') && T[i - 2]?.t === 'num' && T[i - 3]?.t === 'p') return true;
     if (next?.t === 'pct') return true;
+    if (next?.t === 'w' && (next.v === 'and' || next.v === 'aur') && prev?.t === 'w' && (WAYS.has(prevV) || SPLIT.has(prevV) || prevV === 'between' || prevV === 'among')) return true; // "split into 2 people namit and himi"
     if (w.cap && prev && prev.t === 'num' && T[i - 2]?.t === 'p') return true;
     return false;
   };
-  for (let i = 0; i < T.length; i++) {
+  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < T.length; i++) {
     if (isNameSlotWord(i)) {
       const disp = nameCase(T[i].v);
       newNames.set(T[i].v, disp);
       T[i] = { t: 'p', v: 'new:' + T[i].v, cap: true };
     }
+  }
+  // A new name found once counts everywhere ("namit and himi ... himi is the name").
+  for (let i = 0; i < T.length; i++) if (T[i].t === 'w' && newNames.has(T[i].v)) T[i] = { t: 'p', v: 'new:' + T[i].v, cap: true };
+  // Pronouns -> the nearest other person mentioned before (or else after) them.
+  for (let i = 0; i < T.length; i++) {
+    if (T[i].t !== 'w' || !PRON.has(T[i].v)) continue;
+    let ref = null;
+    for (let j = i - 1; j >= 0 && !ref; j--) if (T[j].t === 'p' && T[j].v !== me && T[j].v !== '*') ref = T[j].v;
+    for (let j = i + 1; j < T.length && !ref; j++) if (T[j].t === 'p' && T[j].v !== me && T[j].v !== '*') ref = T[j].v;
+    if (ref) T[i] = { t: 'p', v: ref };
   }
 
   // Debt phrasing: "Rahul owes me 500", "I owe Rahul 200", "lent Rahul 300", "borrowed 300 from Rahul".
@@ -231,6 +246,10 @@ export function parseExpense(text, ctx) {
     const t = T[i], prev = T[i - 1], next = T[i + 1];
     if (t.t === 'p') {
       const n1 = next?.t === 'w' ? next.v : '', n2 = T[i + 2]?.t === 'w' ? T[i + 2].v : '';
+      if (CONSUME.has(n1) && T[i + 2]?.t === 'num') {
+        // "Priya had 300", "himi ate 800"
+        const o = addOwed(t.v); o.amt = Math.round(T[i + 2].v * 100); lastP = null; i += 2; continue;
+      }
       if (n1 === 'ko' || n1 === 'liye' || (n1 === 'ke' && n2 === 'liye')) {
         addOwed(t.v); only = true; lastP = null; i += n1 === 'ke' ? 2 : 1; continue;
       }
@@ -243,7 +262,18 @@ export function parseExpense(text, ctx) {
     if (t.t === 'num') {
       const n = Math.round(t.v * 100);
       if (next?.t === 'w' && WAYS.has(next.v)) { ways = t.v; i++; continue; }
-      if (prev?.t === 'p' && lastP && lastP.role === 'n' && next?.t === 'w' && PAY.has(next.v)) {
+      {
+        // "1500 by me", "800 eaten by her": amount, optional verb, "by", person
+        let j = i + 1, consume = false;
+        if (T[j]?.t === 'w' && CONSUME.has(T[j].v)) { consume = true; j++; }
+        if (total != null && T[j]?.t === 'w' && T[j].v === 'by' && T[j + 1]?.t === 'p') {
+          const id = T[j + 1].v;
+          if (consume || mode !== 'pay') { const o = addOwed(id); o.amt = n; const k = pending.indexOf(id); if (k >= 0) pending.splice(k, 1); }
+          else addPayer(id).amt = n;
+          i = j + 1; continue;
+        }
+      }
+      if (prev?.t === 'p' && lastP && next?.t === 'w' && PAY.has(next.v)) {
         // "maine 500 diye", "Rahul 300 paid": the amount is what they paid
         const k = pending.indexOf(lastP.id); if (k >= 0) pending.splice(k, 1);
         addPayer(lastP.id).amt = n; lastP = { id: lastP.id, role: 'pay' }; i++; continue;
@@ -333,7 +363,7 @@ export function parseExpense(text, ctx) {
   }
   for (const id of expand([...excluded])) excluded.add(id);
   const hasOwedInfo = owed.length > 0;
-  if ((withFlag || (pending.length && !only)) && !only) payers.forEach((p) => { if (!findOwed(p.id)) owed.push({ id: p.id, amt: null, pct: null }); });
+  if ((withFlag || (pending.length && !only && !owed.some((o) => o.amt != null || o.pct != null))) && !only) payers.forEach((p) => { if (!findOwed(p.id)) owed.push({ id: p.id, amt: null, pct: null }); });
   let partIds = owed.map((o) => o.id).filter((id) => !excluded.has(id));
 
   if (!hasOwedInfo) {
@@ -379,7 +409,7 @@ export function parseExpense(text, ctx) {
   return finish({ desc: descFrom(descToks), amount: total, paid, split });
 
   function descFrom(ts) {
-    const words = ts.filter((t) => t.t === 'w' && !STOP.has(t.v) && !PAY.has(t.v) && !SPLIT.has(t.v) && !WITH.has(t.v) && !FOR.has(t.v) && !EQUAL.has(t.v) && !DAYS.includes(t.v) && t.v !== 'kal').map((t) => t.v);
+    const words = ts.filter((t) => t.t === 'w' && !STOP.has(t.v) && !WAYS.has(t.v) && !CONSUME.has(t.v) && !PRON.has(t.v) && !PAY.has(t.v) && !SPLIT.has(t.v) && !WITH.has(t.v) && !FOR.has(t.v) && !EQUAL.has(t.v) && !DAYS.includes(t.v) && t.v !== 'kal').map((t) => t.v);
     return words.length ? cap1(words.join(' ')) : '';
   }
   function finish(d) {
@@ -389,7 +419,8 @@ export function parseExpense(text, ctx) {
     // Only surface new names that ended up used.
     const used = new Set([...Object.keys(d.paid), ...Object.keys(d.split.parts)]);
     const nn = [...newNames.entries()].filter(([k]) => used.has('new:' + k)).map(([k, v]) => ({ id: 'new:' + k, name: v }));
-    return { ...d, desc: d.desc || (category !== 'general' ? cap1(category) : 'Expense'), category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings };
+    const fallback = toks.some((t) => t.v === 'bill') ? 'Bill' : category !== 'general' ? cap1(category) : 'Expense';
+    return { ...d, desc: d.desc || fallback, category, date: parseDate(toks, ctx.now || Date.now()).getTime(), newNames: nn, warnings };
   }
 }
 
