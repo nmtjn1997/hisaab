@@ -2,8 +2,10 @@
 export const toPaise = (r) => Math.round(Number(r) * 100);
 export const toRupees = (p) => p / 100;
 
-const nf = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
-export const fmt = (p, cur = '₹') => (p < 0 ? '-' : '') + cur + nf.format(Math.abs(p) / 100);
+const nf0 = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+const nf2 = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Whole rupees print without decimals; anything with paise always shows two digits.
+export const fmt = (p, cur = '₹') => (p < 0 ? '-' : '') + cur + (Math.abs(p) % 100 ? nf2 : nf0).format(Math.abs(p) / 100);
 
 // Split `total` across keys by integer weights; remainder paise go to the
 // largest fractional parts so the parts always sum exactly to total.

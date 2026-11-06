@@ -1,7 +1,7 @@
 // node tests/run.mjs  (no deps)
 import assert from 'node:assert/strict';
 import { parseExpense } from '../js/parse.js';
-import { computeOwed, balances, simplify, allocate, sumVals } from '../js/money.js';
+import { computeOwed, balances, simplify, allocate, sumVals, fmt } from '../js/money.js';
 
 const people = [
   { id: 'me', name: 'Namit' },
@@ -183,4 +183,11 @@ t('hinglish: mere liye', () => {
   const d = P('Deepak ne mere liye 300 diye');
   assert.deepEqual(d.paid, { dee: 30000 });
   assert.deepEqual(d.owed, { me: 30000 });
+});
+
+t('money format', () => {
+  assert.equal(fmt(830250), '₹8,302.50');
+  assert.equal(fmt(120000), '₹1,200');
+  assert.equal(fmt(-5), '-₹0.05');
+  assert.equal(fmt(10000000), '₹1,00,000');
 });

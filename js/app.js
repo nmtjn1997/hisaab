@@ -119,6 +119,31 @@ function netLabel(n, settled = 'settled up') {
   if (n < 0) return `<div class="end neg"><div class="k">you owe</div><div class="v">${money(-n)}</div></div>`;
   return `<div class="end faint"><div class="k">${settled}</div><div class="v"></div></div>`;
 }
+// A realistic 3-day trip so a first-time visitor sees balances, insights and settle up at once.
+function seedSample() {
+  const me = st().me;
+  const [r, p, d] = ['Rahul', 'Priya', 'Deepak'].map((n) => S.addPerson(n));
+  const gid = S.addGroup('Goa trip (sample)', [r, p, d]);
+  st().groups[gid].sample = true;
+  const day = (k, h = 13) => { const t = new Date(); t.setDate(t.getDate() - k); t.setHours(h, 0, 0, 0); return t.getTime(); };
+  const all = [me, r, p, d];
+  const eq = (ids) => ({ mode: 'equal', parts: Object.fromEntries(ids.map((i) => [i, 1])) });
+  const add = (desc, rupees, payer, split, when, category, extra = {}) => {
+    const amount = rupees * 100;
+    const paid = typeof payer === 'string' ? { [payer]: amount } : payer;
+    S.upsertExpense({ gid, desc, amount, date: when, category, paid, owed: computeOwed(amount, split), split, ...extra });
+  };
+  add('Flights to Goa', 18400, me, eq(all), day(4, 9), 'travel', { text: 'Flights 18400 split with everyone' });
+  add('Villa, 2 nights', 12000, { [r]: 8000 * 100, [p]: 4000 * 100 }, eq(all), day(3, 15), 'travel', { text: 'Villa 12000, Rahul paid 8000 Priya paid 4000, split equally' });
+  add('Beach shack dinner', 3240, p, eq(all), day(3, 21), 'food');
+  add('Scooter rental', 1600, d, eq([me, d]), day(2, 10), 'travel', { text: 'Scooter 1600 paid by Deepak, mere aur Deepak ke beech' });
+  add('Parasailing', 4500, r, eq([me, r, p]), day(2, 12), 'fun', { text: 'Parasailing 4500 paid by Rahul, everyone except Deepak' });
+  add('Petrol', 800, me, { mode: 'percent', parts: { [me]: 50, [d]: 50 } }, day(2, 18), 'fuel');
+  add('Groceries for villa', 1450, d, eq(all), day(2, 19), 'groceries');
+  add('Cafe brunch', 2100, me, eq(all), day(1, 11), 'food', { items: [{ name: 'Pancakes', amount: 52000, who: [me, p] }, { name: 'Shakshuka', amount: 64000, who: [r, d] }, { name: 'Coffees', amount: 76000, who: all }] });
+  S.upsertExpense({ gid, kind: 'settle', desc: 'Settlement', amount: 100000, date: day(1, 16), category: 'settle', paid: { [d]: 100000 }, owed: { [me]: 100000 }, split: { mode: 'exact', parts: { [me]: 100000 } } });
+  return gid;
+}
 function ensureEveryday() {
   let g = S.groupList().find((x) => x.name === 'Everyday');
   return g ? g.id : S.addGroup('Everyday');
@@ -150,6 +175,14 @@ function listen(onText) {
 // ---------- router ----------
 const routes = [
   [/^\/welcome$/, viewWelcome],
+  [/^\/demo$/, () => {
+    if (!st().me) { const id = S.uid(); st().people[id] = { id, name: 'You', phone: '', upi: '', createdAt: Date.now() }; st().me = id; }
+    const g = Object.values(st().groups).find((x) => x.sample && !x.deleted);
+    const gid = g ? g.id : seedSample();
+    S.flush();
+    history.replaceState(null, '', '#/g/' + gid);
+    return viewGroup(gid);
+  }],
   [/^\/$/, viewHome],
   [/^\/groups$/, viewGroups],
   [/^\/g\/(\w+)\/report$/, viewReport],
@@ -174,7 +207,7 @@ async function render() {
   closeSheet?.();
   const { path, q } = parseHash();
   Q = q;
-  if (!st().me && !/^\/(welcome|import\/)/.test(path)) { sessionStorage.setItem('after-welcome', location.hash); return go('/welcome'); }
+  if (!st().me && !/^\/(welcome|demo|import\/)/.test(path)) { sessionStorage.setItem('after-welcome', location.hash); return go('/welcome'); }
   let v = null;
   for (const [re, fn] of routes) {
     const m = path.match(re);
@@ -229,10 +262,20 @@ function viewWelcome() {
       <form id="wf" style="margin-top:16px">
         <label class="field"><span>Your name</span><input class="input" name="n" required maxlength="40" autocomplete="given-name" placeholder="e.g. Namit" autofocus></label>
         <button class="btn primary block" type="submit">Get started ${icon('right', 'sm')}</button>
+        <button class="btn ghost block" type="button" id="demo" style="margin-top:8px">${icon('sparkle', 'sm')} Look around with a sample trip</button>
       </form>
       <p class="faint small" style="text-align:center;margin-top:14px">Your data stays on this phone. Nothing is uploaded.</p>
     </div>`,
     mount(v) {
+      $('#demo', v).onclick = () => {
+        const n = $('#wf', v).n.value.trim() || 'You';
+        const id = S.uid();
+        st().people[id] = { id, name: n, phone: '', upi: '', createdAt: Date.now() };
+        st().me = id;
+        const gid = seedSample();
+        S.flush();
+        location.hash = '#/g/' + gid;
+      };
       $('#wf', v).onsubmit = (e) => {
         e.preventDefault();
         const n = e.target.n.value.trim();
@@ -376,7 +419,7 @@ function viewGroup(gid, tab = 'expenses') {
   return {
     tab: 'groups', title: g.name, back: '/groups',
     actions: `<button class="icon-btn" data-act="shareGroup" data-g="${gid}" aria-label="Share">${icon('share')}</button><button class="icon-btn" data-act="groupMenu" data-g="${gid}" aria-label="Group options">${icon('more')}</button>`,
-    html: `<section class="hero" style="padding:16px 18px">
+    html: `${g.sample ? `<div class="note" style="margin:4px 0 12px;align-items:center">${icon('sparkle', 'sm')}<span style="flex:1">Sample trip to look around. Delete it when you are ready.</span><button class="btn sm" data-act="delSample" data-g="${gid}">Delete</button></div>` : ''}<section class="hero" style="padding:16px 18px">
         <div style="display:flex;align-items:center;gap:12px"><span class="av lg" style="--h:${g.hue}">${esc(initials(g.name))}</span><div style="flex:1;min-width:0"><div class="small muted" style="font-weight:600">${myNet > 0 ? 'You get back' : myNet < 0 ? 'You owe' : 'You are'}</div><div style="font:800 28px var(--display);letter-spacing:-.02em" class="${myNet > 0 ? 'pos' : myNet < 0 ? 'neg' : ''} num">${myNet ? money(Math.abs(myNet)) : 'settled up'}</div></div><div style="text-align:right"><div class="small muted" style="font-weight:600">Total spend</div><div style="font:700 17px var(--display)" class="num">${money(total)}</div></div></div>
       </section>
       <nav class="seg" style="margin-top:14px" aria-label="Group sections">${tabs.map(([k, l]) => `<a href="#/g/${gid}${k === 'expenses' ? '' : '/' + k}" ${tab === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
@@ -1004,6 +1047,7 @@ function viewSettings() {
       <div class="btns"><button class="btn" data-act="export">${icon('download', 'sm')} Export backup</button><label class="btn">${icon('upload', 'sm')} Restore<input type="file" accept="application/json,.json" id="restore" hidden></label></div>
       <label class="btn block" style="margin-top:10px">${icon('upload', 'sm')} Import from Splitwise (CSV)<input type="file" accept=".csv,text/csv" id="swcsv" hidden></label>
       <p class="faint small" style="margin:6px 4px">In Splitwise: open a group → settings → Export as spreadsheet.</p>
+      <button class="btn ghost block" style="margin-top:10px" data-act="loadSample">${icon('sparkle', 'sm')} Add a sample trip to explore</button>
       <h2 class="h2">Danger zone</h2>
       <button class="btn danger block" data-act="wipe">${icon('trash', 'sm')} Erase everything on this phone</button>
       <p class="faint small" style="text-align:center;margin-top:24px">Hisaab · free, open source, no tracking · <a class="link" href="https://github.com/nmtjn1997/hisaab" target="_blank" rel="noopener">GitHub</a></p>`,
@@ -1193,6 +1237,8 @@ const ACT = {
     });
   },
   print: () => print(),
+  delSample: (b) => { const g = st().groups[b.dataset.g]; g.deleted = true; S.save(); go('/'); toast('Sample removed', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); },
+  loadSample: () => go('/g/' + seedSample()),
   install: async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); },
   export: () => {
     const blob = new Blob([JSON.stringify({ ...st(), exportedAt: Date.now() }, null, 1)], { type: 'application/json' });
