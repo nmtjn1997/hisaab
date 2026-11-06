@@ -33,6 +33,12 @@ const SPLIT = new Set(['split', 'splitted', 'between', 'among', 'amongst', 'divi
 const WITH = new Set(['with', 'saath', 'along']);
 const FOR = new Set(['for', 'on', 'behalf']);
 const EXCEPT = new Set(['except', 'excluding', 'exclude', 'without', 'minus', 'not', 'but', 'chhodke', 'chodke']);
+// Corrections, so a wrong guess can be fixed by just saying more:
+// "remove Priya", "Priya nahi", "add Amit", "Amit bhi", "actually 1500", "paid by Deepak instead", "call it dinner".
+const REMOVE = new Set(['remove', 'removed', 'drop', 'delete', 'kick', 'hatao', 'hata', 'hatado', 'nikalo', 'nikal', 'nikaal']);
+const ADD = new Set(['add', 'include', 'plus', 'join', 'jodo']);
+const OVERRIDE = new Set(['actually', 'instead', 'sorry', 'correction', 'galti', 'matlab', 'change', 'make', 'update', 'nahi', 'no']);
+const RENAME = new Set(['call', 'rename', 'title', 'naam']);
 const ONLY = new Set(['only', 'just', 'alone', 'solo', 'sirf', 'akela']);
 const EQUAL = new Set(['equally', 'evenly', 'equal', 'even', 'barabar']);
 const WAYS = new Set(['ways', 'way', 'people', 'persons', 'person', 'log', 'logo', 'members', 'heads', 'pax']);
@@ -208,10 +214,11 @@ export function parseExpense(text, ctx) {
   // Unknown words become new people only in name slots, so "for pizza" stays a description.
   const isNameSlotWord = (i) => {
     const w = T[i];
-    if (w?.t !== 'w' || STOP.has(w.v) || CAT_OF[w.v] || PAY.has(w.v) || SPLIT.has(w.v) || WITH.has(w.v) || FOR.has(w.v) || EXCEPT.has(w.v) || ONLY.has(w.v) || EQUAL.has(w.v) || WAYS.has(w.v) || CONSUME.has(w.v) || PRON.has(w.v) || w.v.length < 2 || DAYS.includes(w.v)) return false;
+    if (w?.t !== 'w' || STOP.has(w.v) || CAT_OF[w.v] || PAY.has(w.v) || SPLIT.has(w.v) || WITH.has(w.v) || FOR.has(w.v) || EXCEPT.has(w.v) || ONLY.has(w.v) || EQUAL.has(w.v) || WAYS.has(w.v) || CONSUME.has(w.v) || PRON.has(w.v) || ADD.has(w.v) || REMOVE.has(w.v) || OVERRIDE.has(w.v) || RENAME.has(w.v) || w.v.length < 2 || DAYS.includes(w.v)) return false;
     const prev = T[i - 1], next = T[i + 1];
     const prevV = prev?.v;
-    if (prev?.t === 'w' && (prevV === 'by' || prevV === 'between' || prevV === 'among' || prevV === 'amongst' || WITH.has(prevV) || EXCEPT.has(prevV) || ONLY.has(prevV))) return true;
+    if (prev?.t === 'w' && (prevV === 'by' || prevV === 'between' || prevV === 'among' || prevV === 'amongst' || WITH.has(prevV) || EXCEPT.has(prevV) || ONLY.has(prevV) || ADD.has(prevV) || REMOVE.has(prevV))) return true;
+    if (next?.t === 'w' && (next.v === 'bhi' || REMOVE.has(next.v)) && !CAT_OF[w.v]) return true;
     if ((prevV === 'and' || prevV === 'aur' || prevV === ',' || prevV === '&') && T[i - 2]?.t === 'p') return true;
     if (next?.t === 'w' && (next.v === 'ne' || next.v === 'ko') && !CAT_OF[w.v]) return true;
     if (next?.t === 'w' && (PAY.has(next.v) || next.v === 'owes' || next.v === 'owe') && T[i + 2]?.v !== 'by') return w.cap || !CAT_OF[w.v];
@@ -267,6 +274,8 @@ export function parseExpense(text, ctx) {
 
   // Pass 2: state machine.
   let total = null, ways = null, ratio = null, only = false, equal = false, withFlag = false, payNext = null;
+  let overrideAt = -9, descOverride = null;
+  const added = [];
   let mode = 'n';
   const payers = []; // {id, amt|null}
   const owed = [];   // {id, amt|null, pct|null}
@@ -287,11 +296,18 @@ export function parseExpense(text, ctx) {
         // "Priya had 300", "himi ate 800"
         const o = addOwed(t.v); o.amt = Math.round(T[i + 2].v * 100); lastP = null; i += 2; continue;
       }
+      if (REMOVE.has(n1) || n1 === 'nahi' || n1 === 'not' || n1 === 'mat' || (n1 === 'ko' && REMOVE.has(n2))) {
+        excluded.add(t.v); const k = pending.indexOf(t.v); if (k >= 0) pending.splice(k, 1);
+        const o = owed.findIndex((x) => x.id === t.v); if (o >= 0) owed.splice(o, 1);
+        lastP = null; i += n1 === 'ko' ? 2 : 1; continue;
+      }
+      if (n1 === 'bhi' || n1 === 'also') { added.push(t.v); lastP = null; i++; continue; }
       if (n1 === 'ko' || n1 === 'liye' || (n1 === 'ke' && n2 === 'liye')) {
         addOwed(t.v); only = true; lastP = null; i += n1 === 'ke' ? 2 : 1; continue;
       }
       if (mode === 'pay') { const p = addPayer(t.v); if (payNext != null) { p.amt = payNext; payNext = null; } lastP = { id: t.v, role: 'pay' }; }
-      else if (mode === 'ex') { excluded.add(t.v); lastP = null; }
+      else if (mode === 'ex') { excluded.add(t.v); const o = owed.findIndex((x) => x.id === t.v); if (o >= 0) owed.splice(o, 1); lastP = null; }
+      else if (mode === 'add') { added.push(t.v); excluded.delete(t.v); lastP = null; }
       else if (mode === 'owe') { addOwed(t.v); lastP = { id: t.v, role: 'owe' }; }
       else { pending.push(t.v); lastP = { id: t.v, role: 'n' }; }
       continue;
@@ -327,6 +343,10 @@ export function parseExpense(text, ctx) {
         if (mode === 'pay') { addPayer(id).amt = n; } else { addOwed(id).amt = n; }
         lastP = null; i++; continue;
       }
+      if (total != null && i - overrideAt <= 4 && !(next?.t === 'w' && (next.v === 'by' || PAY.has(next.v)))) {
+        for (const p of payers) if (p.amt === total) p.amt = null;
+        total = n; overrideAt = -9; continue;
+      }
       if (total == null) { total = n; continue; }
       if (payNext == null && mode === 'pay') { payNext = n; continue; }
       warnings.push('Ignored extra number ' + t.v);
@@ -337,10 +357,11 @@ export function parseExpense(text, ctx) {
       if (id) { const o = addOwed(id); o.pct = t.v; const k = pending.indexOf(id); if (k >= 0) pending.splice(k, 1); if (next?.t === 'p' && prev?.t !== 'p') i++; }
       continue;
     }
-    if (t.t === 'ratio') { ratio = t.v; continue; }
+    if (t.t === 'ratio') { ratio = t.v; equal = false; continue; }
     if (t.t === 'date' || t.t === 'sep') { if (t.t === 'sep' && (mode === 'pay' || (t.v !== ',' && t.v !== '&' && t.v !== '+'))) mode = 'n'; continue; }
     const w = t.v;
     if (PAY.has(w)) {
+      if (i - overrideAt <= 4) payers.length = 0; // "no, Deepak paid", "actually paid by Rahul"
       if (next?.t === 'w' && next.v === 'by') { mode = 'pay'; i++; continue; }
       if (pending.length) { pending.splice(0).forEach((id) => { addPayer(id); lastP = { id, role: 'pay' }; }); }
       else if (prev?.t === 'p' && lastP) { addPayer(lastP.id); }
@@ -354,14 +375,26 @@ export function parseExpense(text, ctx) {
     if (SPLIT.has(w)) { mode = 'owe'; if (pending.length) { /* "me and rahul split", "mere aur Deepak ke beech" */ pending.splice(0).forEach(addOwed); } continue; }
     if (WITH.has(w)) { mode = 'owe'; withFlag = true; continue; }
     if (FOR.has(w)) { if (next?.t === 'p') mode = 'owe'; else descToks.push(t); continue; }
-    if (EXCEPT.has(w)) { mode = 'ex'; continue; }
+    if (EXCEPT.has(w) || REMOVE.has(w)) { mode = 'ex'; continue; }
+    if (ADD.has(w)) { mode = 'add'; continue; }
+    if (w === 'instead' && lastP?.role === 'pay') { const keep = lastP.id; payers.splice(0, payers.length, ...payers.filter((p) => p.id === keep)); continue; }
+    if (OVERRIDE.has(w)) { overrideAt = i; continue; }
+    if (RENAME.has(w)) {
+      // "call it dinner", "rename to team lunch"
+      let j = i + 1;
+      while (T[j]?.t === 'w' && (T[j].v === 'it' || T[j].v === 'to' || T[j].v === 'as' || T[j].v === 'this')) j++;
+      const words = [];
+      while (T[j]?.t === 'w' && !PAY.has(T[j].v) && !SPLIT.has(T[j].v) && !WITH.has(T[j].v)) words.push(T[j++].v);
+      if (words.length) { descOverride = words.join(' '); i = j - 1; }
+      continue;
+    }
     if (ONLY.has(w)) {
       only = true;
       if (prev?.t === 'p') { const k = pending.indexOf(prev.v); if (k >= 0) pending.splice(k, 1); addOwed(prev.v); }
       else mode = 'owe';
       continue;
     }
-    if (EQUAL.has(w)) { equal = true; continue; }
+    if (EQUAL.has(w)) { equal = true; ratio = null; continue; }
     if (w === 'and' || w === 'aur') continue;
     descToks.push(t);
   }
@@ -404,7 +437,7 @@ export function parseExpense(text, ctx) {
   if ((withFlag || (pending.length && !only && !owed.some((o) => o.amt != null || o.pct != null))) && !only) payers.forEach((p) => { if (!findOwed(p.id)) owed.push({ id: p.id, amt: null, pct: null }); });
   let partIds = owed.map((o) => o.id).filter((id) => !excluded.has(id));
 
-  const peopleExplicit = hasOwedInfo || !!ways || excluded.size > 0 || !!ratio;
+  const peopleExplicit = hasOwedInfo || !!ways || excluded.size > 0 || !!ratio || added.length > 0;
   if (!hasOwedInfo) {
     if (ways) {
       if (members.length === ways) partIds = members.slice();
@@ -416,6 +449,8 @@ export function parseExpense(text, ctx) {
     } else if (ratio && payers.length === ratio.length && payers.length > 1) partIds = payers.map((p) => p.id);
     else partIds = members.filter((m) => !excluded.has(m));
   }
+  for (const id of added) if (!partIds.includes(id) && !excluded.has(id)) partIds.push(id);
+  partIds = partIds.filter((id) => !excluded.has(id));
   if (!partIds.length) partIds = [me];
 
   let split;
@@ -446,10 +481,10 @@ export function parseExpense(text, ctx) {
   if (ratio && split.mode !== 'percent' && split.mode !== 'shares') warnings.push(`Ratio ${ratio.join(':')} needs ${ratio.length} people`);
 
   const splitExplicit = !!(equal || ratio || pcts.length || exacts.length || ways || only);
-  return finish({ desc: descFrom(descToks), amount: total, paid, split, meta: { payer: payerExplicit, people: peopleExplicit, split: splitExplicit } });
+  return finish({ desc: descOverride ? cap1(descOverride) : descFrom(descToks), amount: total, paid, split, meta: { payer: payerExplicit, people: peopleExplicit, split: splitExplicit } });
 
   function descFrom(ts) {
-    const words = ts.filter((t) => t.t === 'w' && !STOP.has(t.v) && !WAYS.has(t.v) && !CONSUME.has(t.v) && !PRON.has(t.v) && !PAY.has(t.v) && !SPLIT.has(t.v) && !WITH.has(t.v) && !FOR.has(t.v) && !EQUAL.has(t.v) && !DAYS.includes(t.v) && t.v !== 'kal').map((t) => t.v);
+    const words = ts.filter((t) => t.t === 'w' && !STOP.has(t.v) && !OVERRIDE.has(t.v) && !ADD.has(t.v) && !REMOVE.has(t.v) && t.v !== 'bhi' && !RENAME.has(t.v) && !WAYS.has(t.v) && !CONSUME.has(t.v) && !PRON.has(t.v) && !PAY.has(t.v) && !SPLIT.has(t.v) && !WITH.has(t.v) && !FOR.has(t.v) && !EQUAL.has(t.v) && !DAYS.includes(t.v) && t.v !== 'kal').map((t) => t.v);
     return words.length ? cap1(words.join(' ')) : '';
   }
   function finish(d) {

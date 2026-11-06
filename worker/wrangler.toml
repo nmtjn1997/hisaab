@@ -9,3 +9,12 @@ class_name = "GroupDO"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GroupDO"]
+
+# 300 requests a minute per IP across all groups
+[[ratelimits]]
+name = "LIMIT"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 300
+  period = 60

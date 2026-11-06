@@ -302,3 +302,36 @@ t('merge: comments union, newer wins, junk dropped', () => {
   assert.deepEqual(Object.keys(m.comments).sort(), ['c1', 'c2']);
   assert.equal(m.comments.c1.deleted, true);
 });
+
+t('corrections: remove / nahi / hatao', () => {
+  assert.deepEqual(Object.keys(P('Dinner 800 split with everyone, remove Priya').owed), ['me', 'dee', 'rah']);
+  assert.deepEqual(Object.keys(P('cab 300, Priya nahi').owed), ['me', 'dee', 'rah']);
+  assert.deepEqual(Object.keys(P('cab 300 split with Rahul and Deepak, Deepak ko hatao').owed), ['rah', 'me']);
+});
+t('corrections: add / bhi, new names too', () => {
+  const d = P('lunch 600 with Deepak, add Amit');
+  assert.deepEqual(Object.keys(d.owed), ['dee', 'me', 'new:amit']);
+  assert.equal(Object.keys(P('chai 100, Amit bhi').owed).length, 5);
+});
+t('corrections: amount and payer', () => {
+  assert.equal(P('Dinner 800 paid by Rahul, actually 1200').amount, 120000);
+  assert.deepEqual(P('Dinner 800 paid by Rahul, actually 1200').paid, { rah: 120000 });
+  assert.deepEqual(P('Dinner 800 paid by Rahul, no, paid by Deepak').paid, { dee: 80000 });
+  assert.deepEqual(P('Dinner 800 paid by Rahul, paid by Deepak instead').paid, { dee: 80000 });
+  assert.equal(P('Dinner 800 make it 950').amount, 95000);
+});
+t('corrections: split mode and rename', () => {
+  const d = P('hotel 3000 between me and Deepak 70-30, actually equally');
+  assert.deepEqual(d.owed, { me: 150000, dee: 150000 });
+  assert.equal(P('800 food, call it team lunch').desc, 'Team lunch');
+});
+
+t('clean: blocks prototype keys and unknown categories', () => {
+  const c = cleanGroup(JSON.parse('{"members":["__proto__","ok"],"people":{"__proto__":{"name":"x"}},"expenses":{"e1":{"id":"e1","category":"<img src onerror=x>","paid":{"__proto__":1,"a":2},"split":{"mode":"<b>","parts":{}}}}}'));
+  assert.deepEqual(c.members, ['ok']);
+  assert.deepEqual(Object.keys(c.people), []);
+  assert.equal(c.expenses.e1.category, 'general');
+  assert.equal(c.expenses.e1.split.mode, 'exact');
+  assert.deepEqual(c.expenses.e1.paid, { a: 2 });
+  assert.equal({}.polluted, undefined);
+});

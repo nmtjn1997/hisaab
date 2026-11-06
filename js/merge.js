@@ -2,7 +2,10 @@
 // Every record carries updatedAt; the newer copy wins. Deletes are soft (deleted: true)
 // so a delete on one phone beats an older edit on another.
 
-const ID = /^[\w:-]{1,40}$/;
+// Ids become object keys and HTML attributes: word chars only, never a prototype key.
+const ID = /^(?!__proto__$|constructor$|prototype$)[\w:-]{1,40}$/;
+const CATS = new Set(['general', 'food', 'groceries', 'travel', 'fuel', 'home', 'fun', 'shopping', 'health', 'settle']);
+const MODES = new Set(['equal', 'exact', 'percent', 'shares', 'items']);
 const str = (s, n) => String(s ?? '').slice(0, n);
 const int = (n) => (Number.isFinite(+n) ? Math.round(+n) : 0);
 const idMap = (o, num = int) => {
@@ -19,10 +22,10 @@ function cleanExpense(e) {
     desc: str(e.desc, 80),
     amount: int(e.amount),
     date: int(e.date),
-    category: str(e.category, 20),
+    category: CATS.has(e.category) ? e.category : 'general',
     paid: idMap(e.paid),
     owed: idMap(e.owed),
-    split: e.split && typeof e.split === 'object' ? { mode: str(e.split.mode, 10), parts: idMap(e.split.parts, (v) => (Number.isFinite(+v) ? +v : 0)) } : { mode: 'exact', parts: {} },
+    split: e.split && typeof e.split === 'object' ? { mode: MODES.has(e.split.mode) ? e.split.mode : 'exact', parts: idMap(e.split.parts, (v) => (Number.isFinite(+v) ? +v : 0)) } : { mode: 'exact', parts: {} },
     items: Array.isArray(e.items) ? e.items.slice(0, 100).map((i) => ({ name: str(i.name, 40), amount: int(i.amount), who: (Array.isArray(i.who) ? i.who : []).filter((w) => ID.test(w)).slice(0, 50) })) : null,
     note: str(e.note, 200),
     text: e.text ? str(e.text, 300) : undefined,

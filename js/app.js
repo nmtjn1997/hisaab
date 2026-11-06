@@ -147,6 +147,11 @@ function seedSample() {
   S.upsertExpense({ gid, kind: 'settle', desc: 'Settlement', amount: 100000, date: day(1, 16), category: 'settle', paid: { [d]: 100000 }, owed: { [me]: 100000 }, split: { mode: 'exact', parts: { [me]: 100000 } } });
   return gid;
 }
+function needsBackup() {
+  const n = Object.keys(st().expenses).length;
+  const live = Object.values(st().groups).some((g) => g.live?.key && !g.deleted);
+  return n >= 15 && !live && Date.now() - (st().settings.lastBackup || 0) > 30 * 864e5;
+}
 function ensureEveryday() {
   let g = S.groupList().find((x) => x.name === 'Everyday');
   return g ? g.id : S.addGroup('Everyday');
@@ -160,7 +165,7 @@ function listen(onText, gid, opts = {}) {
   if (!SR) { toast('Voice input is not supported here. Use the mic on your keyboard.'); return; }
   const g = gid || st().lastGroup;
   const members = g && st().groups[g] ? memberList(g) : [st().me];
-  const check = (t) => { try { return parseExpense(t, { people: peopleArr(), members, me: st().me }); } catch { return null; } };
+  const check = (t) => { try { const full = opts.prefix && !RESET_RE.test(t) ? opts.prefix + ', ' + t : t.replace(RESET_RE, ''); return parseExpense(full, { people: peopleArr(), members, me: st().me }); } catch { return null; } };
   const ov = document.createElement('div');
   ov.className = 'listen';
   ov.innerHTML = `<div class="orb">${icon('mic', 'lg')}</div><div class="said" aria-live="polite">Listening…</div><div class="preview" id="lvp" style="justify-content:center;max-width:420px"></div><div id="lvh" style="max-width:420px;width:100%"><p class="muted small" style="text-align:center">Say what, how much, who paid and who shares. Pills turn green as you say them.</p></div><div class="btns" style="margin-top:20px;width:100%;max-width:320px"><button class="btn" data-c>Cancel</button><button class="btn primary" data-d>Done</button></div>`;
@@ -198,7 +203,7 @@ function listen(onText, gid, opts = {}) {
     timer = setTimeout(() => { stopping = true; try { r?.stop(); } catch {} setTimeout(end, 350); }, wait);
     if (c) {
       ov.querySelector('#lvp').innerHTML = c.html;
-      hint.innerHTML = askHTML(c);
+      hint.innerHTML = askHTML(c) + `<p class="faint small" style="text-align:center;margin:10px 0 0">Wrong? Say “remove Priya”, “add Amit”, “actually 1500”, “paid by Deepak instead” or “scratch that”.</p>`;
     } else {
       ov.querySelector('#lvp').innerHTML = checklist({ slots: { what: 'assumed', amount: 'missing', paid: 'assumed', who: 'assumed', split: 'assumed' }, paid: { [st().me]: 0 }, owedIds: members, split: { mode: 'equal', parts: {} }, desc: '', nameOf: S.pname }).html;
     }
@@ -304,7 +309,7 @@ document.addEventListener('click', (e) => {
 });
 
 // Push local edits of live groups shortly after they happen.
-const liveSig = (gid) => { const g = st().groups[gid]; let m = g.nameAt || 0; for (const e of Object.values(st().expenses)) if (e.gid === gid && e.updatedAt > m) m = e.updatedAt; return m + ':' + g.members.length; };
+const liveSig = (gid) => { const g = st().groups[gid]; let m = g.nameAt || 0; for (const e of Object.values(st().expenses)) if (e.gid === gid && e.updatedAt > m) m = e.updatedAt; for (const c of Object.values(st().comments || {})) if (c.gid === gid && c.updatedAt > m) m = c.updatedAt; return m + ':' + g.members.length; };
 let pushT;
 function schedulePush() {
   clearTimeout(pushT);
@@ -427,6 +432,7 @@ function viewHome() {
       <div class="muted small">${net > 0 ? 'overall, you are owed' : net < 0 ? 'overall, you owe' : 'nobody owes anybody'}</div>
       <div class="row2"><div class="pill"><span>You get</span><b class="pos">${money(get)}</b></div><div class="pill"><span>You pay</span><b class="neg">${money(pay)}</b></div></div>
     </section>
+    ${needsBackup() ? `<div class="note warn" style="margin-top:14px;align-items:center">${icon('download', 'sm')}<span style="flex:1">Your data lives only on this phone. Save a backup now and then.</span><button class="btn sm" data-act="export">Back up</button></div>` : ''}
     ${quickBar('')}
     <div class="hints" ${flag('hints') ? '' : 'hidden'}>${EXAMPLES.map((x) => `<button class="hint" data-hint="${esc(x)}">${esc(x)}</button>`).join('')}</div>
     <h2 class="h2">Groups <a href="#/groups">See all</a></h2>
@@ -585,7 +591,7 @@ function insightsHTML(exps, { gid, mine } = {}) {
     <h2 class="h2">Last 6 months</h2>
     <div class="card"><div class="cols">${months.map((m) => `<div class="c" title="${money(m[2])}"><span class="num" style="font-size:10px">${m[2] ? fmt(m[2], '').replace(/\.\d+$/, '') : ''}</span><i style="height:${(m[2] / maxM) * 100}%"></i>${m[1]}</div>`).join('')}</div></div>
     <h2 class="h2">By category</h2>
-    <div class="card bars">${cats.map(([c, v]) => `<div class="bar-row"><div class="lbl"><span style="display:flex;gap:8px;align-items:center">${catIcon(c)} ${CAT_NAMES[c] || c}</span><span class="num">${money(v)} <span class="faint">${Math.round((v / total) * 100)}%</span></span></div><div class="track"><i style="width:${(v / cats[0][1]) * 100}%"></i></div></div>`).join('')}</div>
+    <div class="card bars">${cats.map(([c, v]) => `<div class="bar-row"><div class="lbl"><span style="display:flex;gap:8px;align-items:center">${catIcon(c)} ${esc(CAT_NAMES[c] || c)}</span><span class="num">${money(v)} <span class="faint">${Math.round((v / total) * 100)}%</span></span></div><div class="track"><i style="width:${(v / cats[0][1]) * 100}%"></i></div></div>`).join('')}</div>
     ${people}
     <h2 class="h2">Biggest</h2><div class="list">${top.map((e) => expenseRow(e, !gid)).join('')}</div>`;
 }
@@ -735,7 +741,8 @@ function checklist(m) {
     : sp.mode === 'equal' ? (owedIds.length === 1 ? `only ${list(owedIds)}` : 'equally')
     : sp.mode === 'percent' || sp.mode === 'shares' ? owedIds.map((id) => +(+sp.parts[id] || 0).toFixed(2)).join(':')
     : 'by amount';
-  const pill = (state, label, value) => `<span class="pl ${state}"><span>${label}</span>${value ? ` <b>${value}</b>` : ''}</span>`;
+  const JUMP = { For: 'desc', Amount: 'amt', 'Paid by': 'paidhead', 'Shared by': 'splithead', Split: 'splithead', When: 'dt' };
+  const pill = (state, label, value) => `<span class="pl ${state}" ${m.jump && JUMP[label] ? `role="button" tabindex="0" data-jump="${JUMP[label]}"` : ''}><span>${label}</span>${value ? ` <b>${value}</b>` : ''}</span>`;
   const out = [];
   out.push(pill(S_.what === 'ok' ? 'ok' : 'as', 'For', esc(m.desc || 'Expense') + (S_.what === 'ok' ? '' : '?')));
   out.push(S_.amount === 'ok' ? pill('ok', 'Amount', money(m.amount)) : pill('bad', 'Amount', 'missing'));
@@ -855,6 +862,30 @@ function draftProblems() {
   return p;
 }
 
+const RESET_RE = /\b(scratch that|start over|start again|clear (it|all|everything)|sab hatao|phir se|reset)\b/i;
+// Append what was just said. Words that name a field win over manual edits of that field,
+// so "actually 1500" or "remove Priya" fixes things even after tapping around.
+function addSpoken(t) {
+  const m = t.match(RESET_RE);
+  if (m) {
+    const rest = t.slice(m.index + m[0].length).replace(/^[\s,.]+/, '');
+    draft = { ...newDraft(draft.gid), key: draft.key };
+    draft.text = rest;
+  } else {
+    const alone = parseExpense(t, { people: peopleArr(), members: draft.gid ? memberList(draft.gid) : [st().me], me: st().me }).slots;
+    const tt = draft.touched;
+    if (alone.amount === 'ok') delete tt.amount;
+    if (alone.paid === 'ok') delete tt.paid;
+    if (alone.who === 'ok' || alone.split === 'ok') delete tt.split;
+    if (/\b(call|rename|naam)\b/i.test(t)) delete tt.desc;
+    draft.text = draft.text.trim() ? draft.text.trim() + ', ' + t : t;
+  }
+  const ta = $('#smart');
+  if (ta) ta.value = draft.text;
+  if (draft.text.trim()) applyParse();
+  render();
+}
+
 function applyParse() {
   const t = draft.text.trim();
   if (!t) return;
@@ -925,8 +956,15 @@ function renderPreview() {
   const pv = $('#pv');
   if (!pv) return;
   if (!draft.text.trim() && !draft.scan && !draft.touched.amount) { pv.innerHTML = `<span class="faint small">Say or type who paid, how much, who shares and how: “split with”, “only me”, 70-30, 90%, “except Priya”, “Priya had 300”, “Rahul owes me 200”, yesterday, Hinglish like “maine 500 diye”.</span>`; return; }
-  const c = checklist({ slots: draftSlots(), amount: draftAmount(), desc: draft.desc, paid: draftPaid(), owedIds: Object.keys(draftOwed()), split: draft.split, date: draft.date, newNames: draft.parsed?.newNames || [], nameOf: dname });
-  pv.innerHTML = c.html + askHTML(c);
+  const c = checklist({ jump: true, slots: draftSlots(), amount: draftAmount(), desc: draft.desc, paid: draftPaid(), owedIds: Object.keys(draftOwed()), split: draft.split, date: draft.date, newNames: draft.parsed?.newNames || [], nameOf: dname });
+  pv.innerHTML = c.html + askHTML(c) + (draft.text.trim() ? `<p class="faint small" style="margin:8px 2px 0">Tap a pill to fix it, or keep talking: “remove Priya”, “actually 1500”.</p>` : '');
+  $$('[data-jump]', pv).forEach((el) => (el.onclick = el.onkeydown = (e) => {
+    if (e.type === 'keydown' && e.key !== 'Enter') return;
+    const t = document.getElementById(el.dataset.jump);
+    if (!t) return;
+    t.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (t.matches('input, select')) setTimeout(() => t.focus({ preventScroll: true }), 300);
+  }));
 }
 
 function renderForm() {
@@ -953,14 +991,14 @@ function renderForm() {
       ${isSettle ? '' : `<div class="hints" style="padding-top:12px">${[draft.category, ...Object.keys(CATEGORIES).concat('general').filter((c) => c !== draft.category)].map((c) => `<button class="chip plain" data-cat="${c}" aria-pressed="${draft.category === c}" style="flex:none">${catIcon(c)} ${CAT_NAMES[c]}</button>`).join('')}</div>`}
     </div>
 
-    <h2 class="h2">Paid by ${isSettle ? '' : `<button class="btn sm ghost" data-act="multiPay">${draft.multiPay ? 'One person' : 'Multiple people'}</button>`}</h2>
+    <h2 class="h2" id="paidhead">Paid by ${isSettle ? '' : `<button class="btn sm ghost" data-act="multiPay">${draft.multiPay ? 'One person' : 'Multiple people'}</button>`}</h2>
     ${draft.multiPay
       ? `<div class="card">${members.map((id) => `<div class="split-row">${davatar(id, 'sm')}<span class="name">${esc(dname(id))}</span><input class="input" data-pay="${id}" inputmode="decimal" placeholder="0" value="${draft.paid[id] ? draft.paid[id] / 100 : ''}" aria-label="${esc(dname(id))} paid"></div>`).join('')}
          <div class="note ${sumVals(paid) === total ? 'ok' : 'warn'}" style="margin-top:8px">${sumVals(paid) === total ? 'Adds up' : `${money(Math.abs(total - sumVals(paid)))} ${sumVals(paid) < total ? 'left' : 'over'}`}</div></div>`
       : `<div class="chips">${members.map((id) => `<button class="chip" data-payer="${id}" aria-pressed="${id === payer}">${davatar(id)}${esc(dname(id).split(' ')[0])}</button>`).join('')}<button class="chip new" data-act="addPersonDraft">${icon('plus', 'sm')} Person</button></div>`}
 
     ${isSettle ? `<h2 class="h2">Paid to</h2><div class="chips">${members.map((id) => `<button class="chip" data-settleto="${id}" aria-pressed="${id in draft.split.parts}">${davatar(id)}${esc(dname(id).split(' ')[0])}</button>`).join('')}</div>` : `
-    <h2 class="h2">Split</h2>
+    <h2 class="h2" id="splithead">Split</h2>
     <div class="seg" role="tablist">${modes.map(([k, l]) => `<button role="tab" data-mode="${k}" aria-selected="${sm === k}">${l}</button>`).join('')}</div>
     <div class="card" style="margin-top:10px">
       ${sm === 'items' ? itemsHTML(members) : members.map((id) => {
@@ -1380,7 +1418,7 @@ const ACT = {
   addMember: (b) => { const g = st().groups[b.dataset.g]; if (!g.members.includes(b.dataset.id)) g.members.push(b.dataset.id); S.save(); render(); },
   speak: () => draft?.items && draft.split.mode === 'items' && !Q.get('q')
     ? listen((t) => { draft.items = assignItems(t, draft.items, { people: peopleArr(), me: st().me, members: draftMembers().filter((x) => !x.startsWith('new:')) }); draft.touched.split = 1; renderPreview(); renderForm(); }, draft.gid, { items: draft.items })
-    : listen((t) => { draft.text = draft.text.trim() ? draft.text.trim() + ', ' + t : t; const ta = $('#smart'); if (ta) ta.value = draft.text; applyParse(); render(); }, draft?.gid),
+    : listen((t) => addSpoken(t), draft?.gid, { prefix: draft?.text || '' }),
   scan: () => $('#file')?.click(),
   sampleBill: async () => { const r = await fetch('assets/sample-bill.jpg'); const b = await r.blob(); scanFile(new File([b], 'sample-bill.jpg', { type: 'image/jpeg' })); },
   clearSmart: () => { const g = draft.gid; draft = { ...newDraft(g), key: draft.key }; render(); },
@@ -1517,8 +1555,10 @@ const ACT = {
     const g = st().groups[b.dataset.g];
     sheet(`<h3>${esc(g.name)}</h3>
       <form id="rn"><label class="field"><span>Name</span><input class="input" name="n" value="${esc(g.name)}" maxlength="50"></label><button class="btn block">Rename</button></form>
+      ${g.live?.key ? `<button class="btn block" style="margin-top:12px" data-x="rotate">${icon('link', 'sm')} Make a new live link</button><p class="faint small" style="margin:6px 4px 0">The old link stops working. Use it if the link reached the wrong person.</p>` : ''}
       <div class="btns" style="margin-top:12px"><button class="btn" data-x="arch">${g.archived ? 'Unarchive' : 'Archive'}</button><button class="btn danger" data-x="del">${icon('trash', 'sm')} Delete</button></div>`, (el, close) => {
       $('#rn', el).onsubmit = (e) => { e.preventDefault(); g.name = e.target.n.value.trim().slice(0, 50) || g.name; g.nameAt = Date.now(); S.save(); close(); render(); };
+      el.querySelector('[data-x=rotate]')?.addEventListener('click', (e) => busy(e.currentTarget, async () => { await Sync.rotate(g.id); close(); toast('New link ready. Share it again with your group.'); render(); }));
       el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; S.save(); close(); go('/groups'); };
       el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Delete ${g.name}?`, 'The group and its expenses disappear from your lists. You can undo right after.', 'Delete', () => { g.deleted = true; S.save(); go('/groups'); toast('Group deleted', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); }); };
     });
@@ -1535,6 +1575,7 @@ const ACT = {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `hisaab-backup-${isoDate(Date.now())}.json`;
+    st().settings.lastBackup = Date.now(); S.save();
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   },
@@ -1555,6 +1596,12 @@ document.addEventListener('click', (e) => {
 // ---------- boot ----------
 applyTheme();
 loadFlagDefaults().then(render);
+// Ask the browser not to evict local data under storage pressure (local-first means this is the only copy).
+S.onChange(() => { if (!st().settings.persistAsked && navigator.storage?.persist) { st().settings.persistAsked = true; navigator.storage.persist().catch(() => {}); } });
+let errShown = 0;
+const onErr = (e) => { console.error(e); if (Date.now() - errShown > 10000) { errShown = Date.now(); toast('Something went wrong. Your data is safe; try again.'); } };
+addEventListener('error', (e) => onErr(e.error || e.message));
+addEventListener('unhandledrejection', (e) => onErr(e.reason));
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').then((reg) => {
     reg.addEventListener('updatefound', () => {

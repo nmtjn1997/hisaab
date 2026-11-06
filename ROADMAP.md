@@ -11,6 +11,8 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-06 Fix by voice or text: "remove Priya", "Priya nahi", "add Amit", "Amit bhi", "actually 1500", "make it 950", "paid by Deepak instead", "actually equally", "call it team lunch", "scratch that". Pills jump to their field. Comments now push in live groups.
+- 2026-11-06 Security: escaped category output (XSS via live group), prototype-key ids blocked, categories and split modes allow-listed on server and client, per-group (60/min) and per-IP (300/min) rate limits, "Make a new live link" key rotation, persistent storage request, backup nudge, global error net.
 - 2026-11-06 Comments on expenses (synced in live groups) and a "What's new" card listing others' adds, edits, deletes and comments since you last looked.
 - 2026-11-06 Live checklist: every field reports said / assumed / missing / does not add up, shown as green, yellow and red pills with one next question, in the mic overlay and the text box. Mic stops faster when everything is said, waits when the amount is missing, and has a who-had-what mode for scanned bills.
 - 2026-11-06 Parser: Hindi amounts (do hazaar paanch sau, dedh sau, saade teen hazaar), sound-alike names for speech (Dipak, Himmy, Pria, Nameet).

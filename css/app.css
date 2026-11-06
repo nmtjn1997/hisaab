@@ -265,3 +265,5 @@ textarea.input { resize: none; min-height: 84px; line-height: 1.45; }
 .listen .pl { font-size: 14px; padding: 8px 13px 8px 11px; }
 .listen .ask { justify-content: center; text-align: left; font-size: 15px; }
 .item-row.unread input { border-color: var(--warn); }
+.pl[role=button] { cursor: pointer; }
+.pl[role=button]:active { transform: scale(.96); }

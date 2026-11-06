@@ -1,7 +1,7 @@
 // Live groups: push local changes, pull everyone else's, merge by updatedAt.
 // The group key lives only on devices and in the link's #fragment.
 import * as S from './store.js';
-import { mergeGroup } from './merge.js';
+import { mergeGroup, cleanGroup } from './merge.js';
 
 export const API = 'https://hisaab-sync.backinstock.workers.dev/g/';
 
@@ -36,7 +36,8 @@ export function payload(gid) {
 }
 
 /** Write merged remote data into local state. Returns how many expenses changed. */
-export function apply(gid, data) {
+export function apply(gid, raw) {
+  const data = cleanGroup(raw); // the server cleans too; never trust the wire
   const st = S.state, g = st.groups[gid], f = toLocal(g);
   let changed = 0;
   for (const rid in data.people) {
@@ -75,6 +76,7 @@ export function sync(gid, { push = true } = {}) {
     try {
       const body = push ? JSON.stringify({ data: payload(gid) }) : '{}';
       const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': g.live.key }, body });
+      if (r.status === 429) return { ok: false, error: 'Busy, will retry' };
       if (r.status === 403) { g.live.error = 'This live link was replaced'; S.save(); return { ok: false, error: g.live.error }; }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const { data } = await r.json();
@@ -97,9 +99,18 @@ export async function peek(gid, key) {
   const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': key }, body: '{}' });
   if (r.status === 403) throw new Error('This link is not valid any more. Ask for a new one.');
   if (!r.ok) throw new Error('Could not reach the group. Check your connection.');
-  return (await r.json()).data;
+  return cleanGroup((await r.json()).data);
 }
 
 export const remoteId = (gid, localId) => toRemote(S.state.groups[gid])(localId);
+/** New key for a live group: everyone holding the old link loses access. */
+export async function rotate(gid) {
+  const g = S.state.groups[gid];
+  const next = newKey();
+  const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': g.live.key, 'X-New-Key': next }, body: '{}' });
+  if (!r.ok) throw new Error('Could not reset the link. Check your connection.');
+  g.live.key = next;
+  S.save();
+}
 export const liveLink = (gid) => `${location.origin}${location.pathname}#/join/${gid}~${S.state.groups[gid].live.key}`;
 export { mergeGroup };

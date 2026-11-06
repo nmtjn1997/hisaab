@@ -1,5 +1,5 @@
 // Offline: stale-while-revalidate for the app shell and fonts. Bump VERSION on every deploy.
-const VERSION = 'h-2611061549';
+const VERSION = 'h-2611061554';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/money.js', 'js/parse.js', 'js/store.js', 'js/share.js', 'js/receipt.js', 'js/icons.js', 'js/sync.js', 'js/merge.js', 'js/flags.js', 'flags.json', 'manifest.webmanifest', 'assets/icon.svg'];
 
 self.addEventListener('install', (e) => {
