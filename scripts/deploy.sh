@@ -10,7 +10,11 @@ git add -A
 git commit -q --no-verify -m "${1:-Update}" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" || true
 GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p') git push -q origin main
 out=$(mktemp -d)
-(cd worker && wrangler deploy 2>&1 | grep -E 'Deployed|error' || true)
+# Server: only when its code changed (worker/ or the shared merge/history logic), and never hang the deploy.
+wsum=$(cat worker/index.js worker/wrangler.toml js/merge.js js/history.js | shasum | cut -c1-12)
+if [ "$wsum" != "$(cat .worker-sum 2>/dev/null)" ]; then
+  (cd worker && timeout 120 wrangler deploy 2>&1 | grep -E 'Deployed|error') && echo "$wsum" > .worker-sum || echo "worker deploy skipped or failed"
+fi
 rsync -a --exclude worker --exclude .git --exclude .claude --exclude tests --exclude scripts --exclude package.json ./ "$out/"
-for proj in gethisaab hisaab; do wrangler pages deploy "$out" --project-name $proj --branch main --commit-dirty=true 2>&1 | tail -1; done
+for proj in gethisaab hisaab; do timeout 180 wrangler pages deploy "$out" --project-name $proj --branch main --commit-dirty=true 2>&1 | tail -1; done
 rm -rf "$out"
