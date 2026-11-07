@@ -8,7 +8,7 @@ v=$(date +%y%m%d%H%M)
 sed -i '' "s/^const VERSION = '.*';/const VERSION = 'h-$v';/" sw.js
 git add -A
 git commit -q --no-verify -m "${1:-Update}" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" || true
-GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p') git push -q origin main
+GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p') git push -q origin main || echo "GitHub push failed (network); it goes out with the next deploy"
 out=$(mktemp -d)
 # Server: only when its code changed (worker/ or the shared merge/history logic), and never hang the deploy.
 wsum=$(cat worker/index.js worker/wrangler.toml js/merge.js js/history.js | shasum | cut -c1-12)
