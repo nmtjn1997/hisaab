@@ -9,7 +9,7 @@ const MAX_BODY = 2_000_000;
 
 const cors = (origin) => ({
   'Access-Control-Allow-Origin': ORIGINS.some((r) => r.test(origin || '')) ? origin : 'https://gethisaab.pages.dev',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-Key, X-New-Key, X-Device, Authorization',
   'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
@@ -21,8 +21,36 @@ async function sha256(s) {
   return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
+const CHUNK = 96 * 1024, MAX_PHOTO = 1_500_000, MAX_PHOTOS = 300;
 export class GroupDO extends DurableObject {
   writes = [];
+  // Bill photos live with their group, in chunks (storage values are size-limited), behind the group key.
+  async putPhoto(keyHash, rid, bytes, type) {
+    const cur = await this.ctx.storage.get('g');
+    if (!cur || cur.keyHash !== keyHash) return { status: 403, body: { error: 'wrong key' } };
+    if (bytes.byteLength > MAX_PHOTO) return { status: 413, body: { error: 'too large' } };
+    const index = (await this.ctx.storage.get('photos')) || [];
+    if (!index.includes(rid)) {
+      if (index.length >= MAX_PHOTOS) return { status: 507, body: { error: 'photo limit reached' } };
+      index.push(rid);
+    }
+    const n = Math.ceil(bytes.byteLength / CHUNK);
+    const puts = { photos: index, ['pm:' + rid]: { n, size: bytes.byteLength, type, at: Date.now() } };
+    for (let i = 0; i < n; i++) puts[`pc:${rid}:${i}`] = bytes.slice(i * CHUNK, (i + 1) * CHUNK);
+    await this.ctx.storage.put(puts);
+    return { status: 200, body: { ok: true, size: bytes.byteLength } };
+  }
+  async getPhoto(keyHash, rid) {
+    const cur = await this.ctx.storage.get('g');
+    if (!cur || cur.keyHash !== keyHash) return { status: 403 };
+    const meta = await this.ctx.storage.get('pm:' + rid);
+    if (!meta) return { status: 404 };
+    const parts = await this.ctx.storage.get(Array.from({ length: meta.n }, (_, i) => `pc:${rid}:${i}`));
+    const out = new Uint8Array(meta.size);
+    let off = 0;
+    for (let i = 0; i < meta.n; i++) { const c = new Uint8Array(parts.get(`pc:${rid}:${i}`)); out.set(c, off); off += c.byteLength; }
+    return { status: 200, bytes: out.buffer, type: meta.type };
+  }
   // Durable Objects run one request at a time per group (input gate), so read-merge-write
   // below is atomic: two phones pushing at the same instant cannot overwrite each other.
   async sync(keyHash, incoming, newHash, histSince = 0, dev = '') {
@@ -170,6 +198,26 @@ export default {
       if (path === '/admin/stats') return json(await stats(env, Math.max(1, Math.min(90, +url.searchParams.get('days') || 30))), 200, origin);
       if (path === '/admin/logs') { const r = await logs(env, url.searchParams.get('kind'), +url.searchParams.get('limit')); return r ? json(r, 200, origin) : json({ error: 'kind' }, 400, origin); }
       return json({ error: 'not found' }, 404, origin);
+    }
+    const pm = path.match(/^\/g\/([\w-]{8,40})\/photo\/([\w-]{6,40})$/);
+    if (pm) {
+      const key = req.headers.get('X-Key') || '';
+      if (key.length < 16 || key.length > 64) return json({ error: 'bad key' }, 401, origin);
+      if (await limited(req, env)) return json({ error: 'slow down' }, 429, origin);
+      const stub = env.GROUPS.get(env.GROUPS.idFromName(pm[1]));
+      if (req.method === 'PUT') {
+        const type = req.headers.get('Content-Type') || '';
+        if (!/^image\/(jpeg|png|webp)$/.test(type)) return json({ error: 'images only' }, 415, origin);
+        if ((+req.headers.get('Content-Length') || 0) > MAX_PHOTO) return json({ error: 'too large' }, 413, origin);
+        const r = await stub.putPhoto(await sha256(key), pm[2], await req.arrayBuffer(), type);
+        return json(r.body, r.status, origin);
+      }
+      if (req.method === 'GET') {
+        const r = await stub.getPhoto(await sha256(key), pm[2]);
+        if (r.status !== 200) return json({ error: r.status === 404 ? 'not found' : 'wrong key' }, r.status, origin);
+        return new Response(r.bytes, { headers: { 'Content-Type': r.type, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', ...cors(origin) } });
+      }
+      return json({ error: 'method' }, 405, origin);
     }
     const m = path.match(/^\/g\/([\w-]{8,40})$/);
     if (!m || req.method !== 'POST') return json({ error: 'not found' }, 404, origin);

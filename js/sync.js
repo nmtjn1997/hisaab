@@ -29,7 +29,7 @@ export function payload(gid) {
   const people = {};
   for (const id of ids) { const p = st.people[id]; if (p) people[f(id)] = { id: f(id), name: p.name, upi: p.upi || '', updatedAt: p.updatedAt || p.createdAt || 0 }; }
   const expenses = {};
-  for (const e of exps) { const { gid: _g, receiptId: _r, imported: _i, ...rest } = mapExp(e, f); expenses[rest.id] = rest; }
+  for (const e of exps) { const { gid: _g, imported: _i, ...rest } = mapExp(e, f); expenses[rest.id] = rest; }
   const comments = {};
   for (const c of Object.values(st.comments || {})) if (c.gid === gid) { const { gid: _g, ...rest } = c; comments[c.id] = { ...rest, by: f(c.by) }; }
   const meta = g.metaAt ? { cur: g.cur || null, budget: g.budget || null, start: g.start || null, end: g.end || null, at: g.metaAt } : null;
@@ -53,7 +53,7 @@ export function apply(gid, raw) {
     const le = st.expenses[id];
     // Compare in the shared (remote id) form so every phone breaks ties the same way.
     if (isNewer(data.expenses[id], le && mapExp(le, toRemote(g)))) {
-      st.expenses[id] = { ...re, gid, receiptId: le?.receiptId };
+      st.expenses[id] = { ...re, gid, receiptId: re.receiptId || le?.receiptId };
       changed++;
     }
   }
@@ -164,6 +164,24 @@ export async function rotate(gid) {
   if (!r.ok) throw new Error('Could not reset the link. Check your connection.');
   g.live.key = next;
   S.save();
+}
+/** Upload one bill photo for a live group. Resolves true when the server has it. */
+export async function uploadPhoto(gid, rid, blob) {
+  const g = S.state.groups[gid];
+  if (!g?.live?.key || !blob) return false;
+  try {
+    const r = await fetch(`${API}${gid}/photo/${rid}`, { method: 'PUT', headers: { 'Content-Type': blob.type || 'image/jpeg', 'X-Key': g.live.key }, body: blob });
+    return r.ok;
+  } catch { return false; }
+}
+/** Fetch a bill photo someone else in the group took. */
+export async function downloadPhoto(gid, rid) {
+  const g = S.state.groups[gid];
+  if (!g?.live?.key) return null;
+  try {
+    const r = await fetch(`${API}${gid}/photo/${rid}`, { headers: { 'X-Key': g.live.key } });
+    return r.ok ? await r.blob() : null;
+  } catch { return null; }
 }
 export const liveLink = (gid) => `${location.origin}${location.pathname}#/join/${gid}~${S.state.groups[gid].live.key}`;
 export { mergeGroup };

@@ -834,10 +834,11 @@ function viewExpense(id) {
       const cf = $('#cmt', v);
       if (cf) cf.onsubmit = (ev) => { ev.preventDefault(); const t = cf.t.value.trim(); if (!t) return; S.addComment(e.gid, id, t); buzz(); render(); };
       if (e.receiptId) {
-        const b = await S.getReceipt(e.receiptId);
+        let b = await S.getReceipt(e.receiptId);
+        if (!b && st().groups[e.gid]?.live?.key) { b = await Sync.downloadPhoto(e.gid, e.receiptId); if (b) S.putReceipt(e.receiptId, b).catch(() => {}); }
         const box = $('#rimg', v);
         if (!box) return;
-        if (!b) { box.innerHTML = '<p class="faint small">Bill image is on the phone that scanned it.</p>'; return; }
+        if (!b) { box.innerHTML = `<p class="faint small">${st().groups[e.gid]?.live?.key ? 'The bill photo has not reached the group yet. It uploads when the phone that took it is online.' : 'Bill image is on the phone that scanned it.'}</p>`; return; }
         const url = URL.createObjectURL(b);
         box.innerHTML = `<a href="${url}" target="_blank" rel="noopener"><img class="receipt-img" src="${url}" alt="Scanned bill"></a>`;
       }
@@ -1412,7 +1413,7 @@ async function saveDraft(btn) {
     const g = st().groups[draft.gid];
     for (const id of [...Object.keys(paid), ...Object.keys(owed)]) if (!g.members.includes(id)) g.members.push(id);
     let receiptId = draft.receiptId;
-    if (draft.receiptBlob) { receiptId = S.uid(); try { await S.putReceipt(receiptId, draft.receiptBlob); } catch { receiptId = null; toast('Could not store the bill photo'); } }
+    if (draft.receiptBlob) { receiptId = S.uid(); try { await S.putReceipt(receiptId, draft.receiptBlob); queuePhoto(draft.gid, receiptId); } catch { receiptId = null; toast('Could not store the bill photo'); } }
     const split = draft.split.mode === 'items' ? { mode: 'items', parts: {} } : { mode: draft.split.mode, parts: fix(draft.split.parts) };
     const items = draft.split.mode === 'items' && draft.items ? draft.items.map((it) => ({ ...it, who: it.who.map((w) => map[w] || w) })) : null;
     const id = S.upsertExpense({ id: draft.id, gid: draft.gid, kind: draft.kind || 'expense', text: draft.text.trim() || undefined, desc: (draft.desc || CAT_NAMES[draft.category] || 'Expense').trim().slice(0, 80), amount: total, date: draft.date, category: draft.kind === 'settle' ? 'settle' : draft.category, paid, owed, split, items, note: draft.note.trim(), receiptId, ...(draft.repeatOf ? {} : { repeat: draft.repeat ? { every: draft.repeat } : null }) });
@@ -1640,10 +1641,34 @@ function inviteSheet(gid) {
   });
 }
 
+// Bill photos of live groups go up in the background; failures stay queued and retry.
+function queuePhoto(gid, rid) {
+  if (!st().groups[gid]?.live?.key) return;
+  (st().settings.photoQueue ||= []).push({ gid, rid });
+  S.save();
+  setTimeout(flushPhotos, 1500);
+}
+let flushing = false;
+async function flushPhotos() {
+  const q = st().settings.photoQueue || [];
+  if (flushing || !q.length || !navigator.onLine) return;
+  flushing = true;
+  try {
+    for (const item of [...q]) {
+      const blob = await S.getReceipt(item.rid).catch(() => null);
+      const ok = !blob || (await Sync.uploadPhoto(item.gid, item.rid, blob));
+      if (ok) st().settings.photoQueue = (st().settings.photoQueue || []).filter((x) => x.rid !== item.rid);
+    }
+    S.save();
+  } finally { flushing = false; }
+}
+addEventListener('online', () => flushPhotos());
+
 // ---------- live groups ----------
 async function goLive(gid) {
   const g = st().groups[gid];
   if (g.live?.key) return;
+  setTimeout(() => { for (const e of S.groupExpenses(gid)) if (e.receiptId) queuePhoto(gid, e.receiptId); }, 2500);
   g.live = { key: Sync.newKey(), map: {} };
   const r = await Sync.sync(gid);
   if (!r.ok) { delete g.live; S.save(); throw new Error('Could not go live. Check your connection.'); }
@@ -1933,6 +1958,7 @@ document.addEventListener('click', (e) => {
 $('#skip')?.addEventListener('click', () => $('#view').focus());
 applyTheme();
 FX.initRipple();
+setTimeout(flushPhotos, 4000);
 initTelemetry(() => flag('telemetry'));
 track('open');
 loadFlagDefaults().then(() => { render(); if (st().me) runRepeats(); });

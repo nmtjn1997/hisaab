@@ -3,13 +3,13 @@
 Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
-- Receipt photos in live groups (upload to R2 so friends can see the bill image).
 - Google Sheets export (needs Google sign-in).
 - Reminders: nudge people with open balances once a week (local notification).
 - End-to-end encryption for live groups (needs a decision: the server could no longer write tamper-proof edit history, since it cannot read changes; would move to signed client-side history).
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
 
 ## Done
+- 2026-11-07 Bill photos in live groups: stored with the group on the sync server (chunked, same group key, 1.5 MB and 300 photo caps, images only), uploaded in the background with a retry queue, fetched and cached when a friend opens the expense; going live uploads existing photos.
 - 2026-11-07 Spreadsheet export: a group as CSV in Splitwise's layout (per-person nets, Total balance row), opens in Excel and Google Sheets and imports back into Splitwise or Hisaab; formula-looking text neutralised. Deploy script skips an unchanged server and never hangs on a failed push.
 - 2026-11-07 Accessibility: all text colours meet 4.5:1 in both themes (faint, and light-mode green, red, amber were below), skip-to-content link, focus moves to the new screen, 40px chips, high-contrast mode outlines. Desktop: left navigation rail, wider content, centred dialogs.
 - 2026-11-06 Search everything: expenses, groups and people across all groups; all words must match; amounts (500, 3.8k), people in a bill, categories (diesel finds petrol), bill items; highlighted matches; recent searches; from Home and Groups.

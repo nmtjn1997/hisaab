@@ -484,3 +484,9 @@ t('CSV export round-trips through the Splitwise importer', () => {
   assert.deepEqual(back.rows[0].nets, [['Namit', -190500], ['Deepak, Jr', 190500]]);
   assert.match(csv.trim().split('\n').pop(), /Total balance,,,INR,1095.00,-1095.00$/);
 });
+
+t('merge: bill photo id travels with the expense, junk ids dropped', () => {
+  const c = cleanGroup({ expenses: { e1: { id: 'e1', receiptId: 'abc123xyz', amount: 1 }, e2: { id: 'e2', receiptId: '../etc/passwd', amount: 1 } } });
+  assert.equal(c.expenses.e1.receiptId, 'abc123xyz');
+  assert.equal(c.expenses.e2.receiptId, undefined);
+});
