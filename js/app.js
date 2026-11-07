@@ -353,7 +353,7 @@ async function render() {
   if (path !== current) track('view', path);
   current = path;
   v.mount?.(view);
-  if (changed) FX.stagger(view);
+  if (changed) { FX.stagger(view); if (document.activeElement === document.body || !view.contains(document.activeElement)) view.focus({ preventScroll: true }); }
   FX.countUp(view, money);
   };
   if (changed && current) await FX.transition(swap, depth(path) < depth(current) || path === '/' ? 'back' : 'fwd');
@@ -1913,6 +1913,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- boot ----------
+$('#skip')?.addEventListener('click', () => $('#view').focus());
 applyTheme();
 FX.initRipple();
 initTelemetry(() => flag('telemetry'));

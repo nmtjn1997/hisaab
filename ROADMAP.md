@@ -3,11 +3,14 @@
 Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
+- Receipt photos in live groups (upload to R2 so friends can see the bill image).
+- Export a group to CSV and Google Sheets.
+- Reminders: nudge people with open balances once a week (local notification).
 - End-to-end encryption for live groups (needs a decision: the server could no longer write tamper-proof edit history, since it cannot read changes; would move to signed client-side history).
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
-10. Accessibility and Lighthouse pass (contrast in light theme, focus order, labels), desktop two-column layout.
 
 ## Done
+- 2026-11-07 Accessibility: all text colours meet 4.5:1 in both themes (faint, and light-mode green, red, amber were below), skip-to-content link, focus moves to the new screen, 40px chips, high-contrast mode outlines. Desktop: left navigation rail, wider content, centred dialogs.
 - 2026-11-06 Search everything: expenses, groups and people across all groups; all words must match; amounts (500, 3.8k), people in a bill, categories (diesel finds petrol), bill items; highlighted matches; recent searches; from Home and Groups.
 - 2026-11-06 Per-group currency (14 options) and trip budget with dates: progress bar, amount left, per-day allowance and pace colour; synced in live groups; home shows other-currency balances separately so totals never mix currencies.
 - 2026-11-06 Live groups hardened with a multi-phone simulator (tests/sim, worker threads running the real app code against the live server): fixed edits lost while a sync was running, edits lost on phones with slow clocks (row fingerprint instead of newest time), split-brain on exact timestamp ties (one total order on server and phones), and idle re-sends eating the write budget. Server-written edit history with device ids, flags for lowered amounts, self-removal, own share lowered, removals and deletes, Undo from history, group History tab, invite prompt after creating a group, 8s live refresh. Nainital trip replayed from 2 phones: Jeeju pays Namit 6,860, identical on both.

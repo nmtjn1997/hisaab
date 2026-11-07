@@ -1,6 +1,6 @@
 :root {
   --bg: #0a0b0f; --surface: #13151c; --surface-2: #1b1e27; --line: #262a36;
-  --text: #f4f5f7; --muted: #9aa1b0; --faint: #6b7282;
+  --text: #f4f5f7; --muted: #9aa1b0; --faint: #868e9e;
   --accent: #c8f560; --on-accent: #0b0d06; --accent-soft: rgba(200, 245, 96, .12);
   --pos: #3ddc97; --pos-soft: rgba(61, 220, 151, .12);
   --neg: #ff6b6b; --neg-soft: rgba(255, 107, 107, .12);
@@ -13,11 +13,11 @@
 }
 :root[data-theme="light"] {
   --bg: #f5f5f0; --surface: #ffffff; --surface-2: #eeeee8; --line: #e1e1d8;
-  --text: #121317; --muted: #555c6b; --faint: #8a909c;
+  --text: #121317; --muted: #555c6b; --faint: #646a77;
   --accent: #c8f560; --on-accent: #0b0d06; --accent-soft: rgba(126, 170, 20, .14);
-  --pos: #0b8a57; --pos-soft: rgba(11, 138, 87, .1);
-  --neg: #d33a3a; --neg-soft: rgba(211, 58, 58, .09);
-  --warn: #b26b00; --info: #2f5fd0;
+  --pos: #087a4d; --pos-soft: rgba(8, 122, 77, .1);
+  --neg: #b52b2b; --neg-soft: rgba(181, 43, 43, .09);
+  --warn: #8f5600; --info: #2f5fd0;
   --shadow: 0 10px 30px rgba(20, 20, 10, .08);
   color-scheme: light;
 }
@@ -389,3 +389,29 @@ textarea.input { resize: none; min-height: 84px; line-height: 1.45; }
 .row.hist .pl { font-size: 12px; padding: 4px 9px 4px 7px; }
 mark { background: var(--accent-soft); color: var(--text); border-radius: 4px; padding: 0 2px; box-shadow: inset 0 -2px 0 var(--accent); }
 #sq::-webkit-search-cancel-button { filter: invert(1); opacity: .5; }
+
+/* ---------- accessibility ---------- */
+.skip { position: fixed; left: 12px; top: -60px; z-index: 100; background: var(--accent); color: var(--on-accent); font-weight: 700; padding: 10px 14px; border-radius: 12px; border: 0; transition: top .2s; }
+.skip:focus { top: calc(10px + var(--safe-t)); }
+.chip { min-height: 40px; }
+main:focus { outline: none; }
+@media (forced-colors: active) { .chip[aria-pressed="true"], .seg [aria-selected="true"], .seg [aria-current="page"] { outline: 2px solid CanvasText; } .pl::before { forced-color-adjust: none; } }
+
+/* ---------- desktop: left rail, roomier content ---------- */
+@media (min-width: 1024px) {
+  .app { max-width: 980px; padding-left: 112px; padding-bottom: 48px; }
+  main { max-width: 760px; padding: 4px 28px 0; }
+  .top { padding-left: 28px; padding-right: 28px; max-width: 816px; }
+  .nav { left: calc(50% - 490px); top: 0; bottom: 0; transform: none; width: 96px; height: 100dvh; padding: 24px 0; display: flex !important; flex-direction: column; justify-content: center; gap: 6px; border-top: 0; border-right: 1px solid var(--line); background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .nav a { min-height: 64px; width: 100%; }
+  .nav a:has(.fab) { order: -1; margin-bottom: 18px; }
+  .nav .fab { margin: 0 auto; }
+  .nav .ind { top: 8px; }
+  .no-nav .app { padding-left: 0; }
+  .sticky-cta { bottom: 16px; }
+  .toast { bottom: 28px; }
+  .sheet { max-width: 560px; bottom: auto; top: 50%; border-radius: 24px; transform: translate(-50%, -50%); animation: sheetPop .3s var(--spring); }
+  .sheet::before { display: none; }
+  @keyframes sheetPop { from { opacity: 0; transform: translate(-50%, -46%) scale(.97); } }
+  .hero .row2 { max-width: 420px; }
+}
