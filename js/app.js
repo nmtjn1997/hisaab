@@ -1,5 +1,5 @@
 import * as S from './store.js';
-import { budgetStatus, fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balances } from './money.js';
+import { dueNudges, budgetStatus, fmt, toPaise, computeOwed, allocate, sumVals, simplify, pairwise, balances } from './money.js';
 import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseRename, phon } from './parse.js';
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
@@ -196,6 +196,20 @@ function budgetHTML(g, total) {
     <div class="track" style="margin-top:6px;height:8px"><i style="width:${Math.min(100, b.pct)}%;background:${color}"></i></div>
     <div class="small" style="margin-top:6px;color:${color};font-weight:600">${line}${b.perDaySoFar != null ? ` <span class="faint" style="font-weight:500">· spending ${money(b.perDaySoFar)} a day so far</span>` : ''}</div></div>`;
 }
+// "Time to nudge": people who have owed me for a week or more and were not reminded this week.
+function nudgeCard() {
+  if (!flag('whatsapp')) return '';
+  const all = dueNudges(personNets(), S.allExpenses().filter(sameCur), st().me, st().settings.reminded || {});
+  const due = all.filter((n) => n.due);
+  if (!due.length) return '';
+  const shown = due.slice(0, 3);
+  return `<section class="card nudge" style="margin-top:14px;padding:14px">
+    <div style="display:flex;align-items:center;gap:8px"><b style="font:700 16px var(--display);flex:1">${icon('bell', 'sm')} Time to nudge</b><span class="faint small">${due.length} ${due.length === 1 ? 'person' : 'people'}</span></div>
+    ${shown.map((n) => `<div class="row" style="cursor:default;padding:10px 0;min-height:52px">${av(n.pid, 'sm')}<div class="main"><div class="t">${esc(S.pname(n.pid))}</div><div class="s">owes you ${money(n.amount)} · ${n.days} days${n.lastReminded ? ` · reminded ${ago(n.lastReminded)}` : ''}</div></div><button class="btn sm primary" data-act="remindPerson" data-id="${n.pid}">${icon('whatsapp', 'sm')} Remind</button></div>`).join('')}
+    ${due.length > shown.length ? `<a class="link small" href="#/people">and ${due.length - shown.length} more</a>` : ''}
+  </section>`;
+}
+
 function ensureEveryday() {
   let g = S.groupList().find((x) => x.name === 'Everyday');
   return g ? g.id : S.addGroup('Everyday');
@@ -495,6 +509,7 @@ function viewHome() {
       <div class="row2"><div class="pill"><span>You get</span><b class="pos" data-count="${get}">${money(get)}</b></div><div class="pill"><span>You pay</span><b class="neg" data-count="${pay}">${money(pay)}</b></div></div>
     </section>
     ${needsBackup() ? `<div class="note warn" style="margin-top:14px;align-items:center">${icon('download', 'sm')}<span style="flex:1">Your data lives only on this phone. Save a backup now and then.</span><button class="btn sm" data-act="export">Back up</button></div>` : ''}
+    ${nudgeCard()}
     ${quickBar('')}
     <div class="hints" ${flag('hints') ? '' : 'hidden'}>${EXAMPLES.map((x) => `<button class="hint" data-hint="${esc(x)}">${esc(x)}</button>`).join('')}</div>
     <h2 class="h2">Groups <a href="#/groups">See all</a></h2>
@@ -1815,6 +1830,10 @@ const ACT = {
     const me = S.person(st().me);
     const text = `Hi ${p.name.split(' ')[0]}, quick reminder from Hisaab: you owe me ${money(n)}.${me.upi ? `\nPay by UPI: ${me.upi}` : ''}`;
     if (p.phone) open(waLink(text, p.phone), '_blank', 'noopener'); else shareText(text);
+    (st().settings.reminded ||= {})[p.id] = Date.now();
+    S.save();
+    track('remind');
+    setTimeout(render, 800);
   },
   notifyBill: (b) => {
     const e = st().expenses[b.dataset.id];

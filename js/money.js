@@ -120,3 +120,26 @@ export function pairwise(expenses, me) {
   for (const k in r) if (!r[k]) delete r[k];
   return r;
 }
+
+/**
+ * Who to nudge: people who owe me, how long their oldest unpaid share has been open,
+ * and whether a reminder is due (owed for 7+ days and not reminded in the last 7 days).
+ * @param nets {pid: paise} from pairwise(), positive = they owe me
+ * @param expenses all live expenses (to date the debt)
+ * @param reminded {pid: ts} last reminder sent
+ */
+export function dueNudges(nets, expenses, me, reminded = {}, now = Date.now()) {
+  const week = 7 * 864e5;
+  const out = [];
+  for (const [pid, amount] of Object.entries(nets)) {
+    if (amount <= 0) continue;
+    // Oldest expense where I paid and they owe, after their last settle-up with me.
+    const lastSettle = Math.max(0, ...expenses.filter((e) => e.kind === 'settle' && pid in e.paid && me in e.owed).map((e) => e.date));
+    const open = expenses.filter((e) => e.kind !== 'settle' && me in e.paid && pid in e.owed && e.date > lastSettle).map((e) => e.date);
+    const since = open.length ? Math.min(...open) : now;
+    const days = Math.floor((now - since) / 864e5);
+    const last = reminded[pid] || 0;
+    out.push({ pid, amount, days, lastReminded: last || null, due: now - since >= week && now - last >= week });
+  }
+  return out.sort((a, b) => b.due - a.due || b.amount - a.amount);
+}

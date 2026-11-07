@@ -415,3 +415,5 @@ main:focus { outline: none; }
   @keyframes sheetPop { from { opacity: 0; transform: translate(-50%, -46%) scale(.97); } }
   .hero .row2 { max-width: 420px; }
 }
+.nudge { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: linear-gradient(135deg, var(--accent-soft), transparent 60%), var(--surface); }
+.nudge .row + .row { border-top: 1px solid var(--line); }

@@ -490,3 +490,22 @@ t('merge: bill photo id travels with the expense, junk ids dropped', () => {
   assert.equal(c.expenses.e1.receiptId, 'abc123xyz');
   assert.equal(c.expenses.e2.receiptId, undefined);
 });
+
+import { dueNudges } from '../js/money.js';
+t('nudges: owed 7+ days and not reminded this week', () => {
+  const now = new Date(2026, 10, 20).getTime(), d = (n) => now - n * 864e5;
+  const ex = [
+    { kind: 'expense', date: d(12), paid: { me: 1000 }, owed: { r: 500, me: 500 } },
+    { kind: 'expense', date: d(2), paid: { me: 1000 }, owed: { p: 500, me: 500 } },
+    { kind: 'settle', date: d(9), paid: { k: 100 }, owed: { me: 100 } },
+    { kind: 'expense', date: d(10), paid: { me: 600 }, owed: { k: 300, me: 300 } },
+    { kind: 'expense', date: d(3), paid: { me: 800 }, owed: { k: 400, me: 400 } },
+  ];
+  const r = dueNudges({ r: 500, p: 500, k: 400, x: -200 }, ex, 'me', { r: d(3) }, now);
+  const by = Object.fromEntries(r.map((n) => [n.pid, n]));
+  assert.equal(by.r.days, 12); assert.equal(by.r.due, false); // reminded 3 days ago
+  assert.equal(by.p.due, false); // only 2 days old
+  assert.equal(by.k.days, 3); // counted from after the settle-up
+  assert.equal(by.x, undefined); // I owe x, not a nudge
+  assert.equal(dueNudges({ r: 500 }, ex, 'me', {}, now)[0].due, true);
+});
