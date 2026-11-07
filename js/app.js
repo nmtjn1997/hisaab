@@ -9,7 +9,7 @@ import { describe as describeHist, revertPatch, FLAG_TEXT } from './history.js';
 import { initTelemetry, track, reportError } from './telemetry.js';
 import { dueRepeats, nextDate } from './repeat.js';
 import { FLAGS, loadFlagDefaults, flagDefault } from './flags.js';
-import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows } from './share.js';
+import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows, groupToCSV } from './share.js';
 
 // ---------- tiny helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -1655,6 +1655,21 @@ async function pickContacts() {
   return list.map((c) => ({ name: String(c.name?.[0] || '').trim().slice(0, 40), phone: String(c.tel?.[0] || '').replace(/[^\d+]/g, '').slice(-13) })).filter((c) => c.name);
 }
 
+const ISO = { '₹': 'INR', '$': 'USD', '€': 'EUR', '£': 'GBP', 'AED ': 'AED', 'S$': 'SGD', '฿': 'THB', '¥': 'JPY', 'Rp ': 'IDR', 'RM ': 'MYR', 'A$': 'AUD', 'C$': 'CAD', 'NPR ': 'NPR', 'LKR ': 'LKR' };
+async function exportCSV(gid) {
+  track('share_csv');
+  const g = st().groups[gid];
+  const exps = S.groupExpenses(gid);
+  const ids = [...new Set([...memberList(gid), ...exps.flatMap((e) => [...Object.keys(e.paid), ...Object.keys(e.owed)])])];
+  const csv = groupToCSV({ expenses: exps, members: ids.map((id) => ({ id, name: S.pname(id, false) })), cur: ISO[gcur(gid)] || gcur(gid).trim(), category: (c) => CAT_NAMES[c] || c });
+  const file = new File(['﻿' + csv], `${g.name.replace(/[^\w-]+/g, '-').slice(0, 40) || 'hisaab'}.csv`, { type: 'text/csv' });
+  if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: g.name }); return; } catch (x) { if (x.name === 'AbortError') return; } }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  toast('Spreadsheet saved');
+}
+
 // Balance card PNG: native share sheet with the image where supported, otherwise a download.
 async function shareCard(gid) {
   const { balanceCard } = await import('./card.js');
@@ -1800,6 +1815,7 @@ const ACT = {
         ${flag('liveGroups') ? '' : '</template>'}${flag('whatsapp') ? '' : '<template>'}<button class="row" data-s="wa">${icon('whatsapp')}<div class="main"><div class="t">WhatsApp summary</div><div class="s">Who pays whom, as a message</div></div></button>
         ${flag('whatsapp') ? '' : '</template>'}<button class="row" data-s="link">${icon('link')}<div class="main"><div class="t">Share a copy of this group</div><div class="s">Others open the link and get every expense</div></div></button>
         <button class="row" data-s="img">${icon('share')}<div class="main"><div class="t">Balance card image</div><div class="s">A picture of who pays whom, best for WhatsApp</div></div></button>
+        <button class="row" data-s="csv">${icon('download')}<div class="main"><div class="t">Spreadsheet (CSV)</div><div class="s">Opens in Excel or Google Sheets, imports into Splitwise</div></div></button>
         <button class="row" data-s="pdf">${icon('file')}<div class="main"><div class="t">PDF report</div><div class="s">Balances, per person totals, all expenses</div></div></button>
       </div>`, (el, close) => {
       (el.querySelector('[data-s=live]') || {}).onclick = (e) => busy(e.currentTarget, async () => {
@@ -1823,6 +1839,7 @@ const ACT = {
         if (navigator.share) { try { await navigator.share({ title: st().groups[gid].name, text: `${st().groups[gid].name} on Hisaab`, url }); return; } catch (x) { if (x.name === 'AbortError') return; } }
         try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { prompt('Copy this link', url); }
       });
+      el.querySelector('[data-s=csv]').onclick = (e) => busy(e.currentTarget, async () => { await exportCSV(gid); close(); });
       el.querySelector('[data-s=pdf]').onclick = () => { track('share_pdf'); close(); go(`/g/${gid}/report`); };
     });
   },

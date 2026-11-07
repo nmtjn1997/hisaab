@@ -467,3 +467,20 @@ t('search: words AND, people, groups, amounts, categories', () => {
   assert.deepEqual(searchAll(state, 'dee').people.map((p) => p.id), ['d']);
   assert.equal(highlight('<b>Safari</b>', 'saf', (s) => s.replace(/</g, '&lt;')), '&lt;b><mark>Saf</mark>ari&lt;/b>');
 });
+
+import { groupToCSV, splitwiseRows } from '../js/share.js';
+t('CSV export round-trips through the Splitwise importer', () => {
+  const members = [{ id: 'n', name: 'Namit' }, { id: 'd', name: 'Deepak, Jr' }];
+  const expenses = [
+    { date: new Date(2026, 9, 24).getTime(), desc: 'Petrol "full tank"', category: 'fuel', amount: 381000, paid: { d: 381000 }, owed: { n: 190500, d: 190500 } },
+    { date: new Date(2026, 9, 25).getTime(), desc: '=HYPERLINK("x")', category: 'fun', amount: 600000, paid: { n: 600000 }, owed: { n: 300000, d: 300000 } },
+  ];
+  const csv = groupToCSV({ expenses, members, name: 'Nainital', cur: 'INR' });
+  assert.ok(!csv.includes('\n=HYPERLINK'), 'formula cells are neutralised');
+  const back = splitwiseRows(csv);
+  assert.deepEqual(back.names, ['Namit', 'Deepak, Jr']);
+  assert.equal(back.rows.length, 2); // "Total balance" row is skipped by the importer
+  assert.equal(back.rows[0].amount, 381000);
+  assert.deepEqual(back.rows[0].nets, [['Namit', -190500], ['Deepak, Jr', 190500]]);
+  assert.match(csv.trim().split('\n').pop(), /Total balance,,,INR,1095.00,-1095.00$/);
+});

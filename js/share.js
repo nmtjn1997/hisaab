@@ -82,3 +82,27 @@ export function splitwiseRows(text) {
   }
   return { names, rows: out };
 }
+
+// Export a group in Splitwise's spreadsheet layout, so it opens in Excel or Google Sheets and
+// imports back into Splitwise or Hisaab: Date, Description, Category, Cost, Currency, one column
+// per person with their net for that row (+ is owed to them), and a closing "Total balance" row.
+// Text that starts like a formula (=, +, -, @) gets a leading quote so spreadsheets show it as text.
+const csvCell = (v) => {
+  let s = String(v ?? '');
+  if (/^[=+\-@]/.test(s) && isNaN(+s)) s = "'" + s;
+  return /[",\n\r]/.test(s) || s.startsWith("'") ? `"${s.replace(/"/g, '""')}"` : s;
+};
+export function groupToCSV({ expenses, members, name, cur = 'INR', category = (c) => c }) {
+  const ids = members.map((m) => m.id);
+  const head = ['Date', 'Description', 'Category', 'Cost', 'Currency', ...members.map((m) => m.name)];
+  const rows = [head];
+  const total = Object.fromEntries(ids.map((id) => [id, 0]));
+  const iso = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  for (const e of [...expenses].sort((a, b) => a.date - b.date)) {
+    const nets = ids.map((id) => (e.paid[id] || 0) - (e.owed[id] || 0));
+    nets.forEach((n, i) => (total[ids[i]] += n));
+    rows.push([iso(e.date), e.desc, e.kind === 'settle' ? 'Payment' : category(e.category), (e.amount / 100).toFixed(2), cur, ...nets.map((n) => (n / 100).toFixed(2))]);
+  }
+  rows.push([iso(Date.now()), 'Total balance', '', '', cur, ...ids.map((id) => (total[id] / 100).toFixed(2))]);
+  return rows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n';
+}
