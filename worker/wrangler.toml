@@ -24,9 +24,12 @@ binding = "DB"
 database_name = "hisaab-metrics"
 database_id = "1b8216c9-e00f-4d07-861e-120d696da114"
 
-# Drop metrics older than 90 days, daily at 03:17 UTC
+# Drop metrics older than 90 days, daily at 03:17 UTC. Hourly: weekly nudge pushes that are due.
 [triggers]
-crons = ["17 3 * * *"]
+crons = ["17 3 * * *", "7 * * * *"]
+
+[vars]
+VAPID_PUBLIC = "BApGC4Ibi_H9NN7xaSBstpqQhCHkImWFWDEm2vo7KUc2hEJmyzybxsLDbmxCnADqTPwsuxnlKEmhcYE1xHoTMws"
 
 [observability]
 enabled = true

@@ -3,6 +3,7 @@ import { dueNudges, budgetStatus, fmt, toPaise, computeOwed, allocate, sumVals, 
 import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseRename, phon } from './parse.js';
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
+import * as Push from './push.js';
 import * as FX from './fx.js';
 import { searchAll, highlight } from './search.js';
 import { describe as describeHist, revertPatch, FLAG_TEXT } from './history.js';
@@ -205,6 +206,14 @@ function budgetHTML(g, total) {
     <div class="track" style="margin-top:6px;height:8px"><i style="width:${Math.min(100, b.pct)}%;background:${color}"></i></div>
     <div class="small" style="margin-top:6px;color:${color};font-weight:600">${line}${b.perDaySoFar != null ? ` <span class="faint" style="font-weight:500">· spending ${money(b.perDaySoFar)} a day so far</span>` : ''}</div></div>`;
 }
+/** One line for the weekly push: who owes the most, and how many others. Null when nobody owes me. */
+function nudgeText() {
+  const owe = dueNudges(personNets(), S.allExpenses().filter(sameCur), st().me, st().settings.reminded || {}).sort((a, b) => b.amount - a.amount);
+  if (!owe.length) return null;
+  return `${S.firstName(owe[0].pid)} owes you ${money(owe[0].amount)}${owe.length > 1 ? ` and ${owe.length - 1} more ${owe.length === 2 ? 'person owes' : 'people owe'} you` : ''}. Tap to remind.`;
+}
+const PUSH_NOTE = { on: 'On. You get a ping when someone adds or changes an entry in a live group, and a weekly reminder on Sunday morning if friends owe you.', off: 'Get a ping when friends add entries to a live group, and a weekly reminder of who owes you.', blocked: 'Notifications are blocked for this site. Allow them in your browser settings, then switch this on.', install: 'On iPhone, add Hisaab to your home screen first (Share → Add to Home Screen), then open it from there.', unsupported: 'This browser cannot show notifications.' };
+
 // "Time to nudge": people who have owed me for a week or more and were not reminded this week.
 function nudgeCard() {
   if (!flag('whatsapp')) return '';
@@ -1593,6 +1602,8 @@ function viewSettings() {
       <nav class="seg">${[['system', 'System'], ['dark', 'Dark'], ['light', 'Light']].map(([k, l]) => `<button data-theme-set="${k}" aria-selected="${s.theme === k}">${l}</button>`).join('')}</nav>
       <label class="field" style="margin-top:12px"><span>Currency symbol</span><select class="input" id="cur">${['₹', '$', '€', '£', 'AED ', 'S$'].map((c) => `<option ${c === s.cur ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       ${installEvt ? `<button class="btn primary block" data-act="install">${icon('download', 'sm')} Install app on this phone</button>` : `<div class="note">${icon('download', 'sm')} Install: browser menu → “Add to Home screen”.</div>`}
+      <h2 class="h2">Notifications</h2>
+      ${(() => { const ps = Push.status(); return `<div class="list"><div class="row" style="cursor:default"><div class="main"><div class="t">Reminders and live updates</div><div class="s" style="white-space:normal">${esc(PUSH_NOTE[ps])}</div></div>${ps === 'on' || ps === 'off' ? `<button class="check" role="switch" id="pushsw" aria-checked="${ps === 'on'}" aria-label="Notifications">${icon('check')}</button>` : ''}</div></div>`; })()}
       <h2 class="h2">Your data</h2>
       <div class="note" style="margin-bottom:10px">Everything stays on this device (${(bytes / 1024).toFixed(0)} KB). Export a backup now and then, or before changing phones.</div>
       <div class="btns"><button class="btn" data-act="export">${icon('download', 'sm')} Export backup</button><label class="btn">${icon('upload', 'sm')} Restore<input type="file" accept="application/json,.json" id="restore" hidden></label></div>
@@ -1610,6 +1621,17 @@ function viewSettings() {
       $$('[data-flag]', v).forEach((b) => (b.onclick = () => { s.flags = { ...(s.flags || {}), [b.dataset.flag]: !flag(b.dataset.flag) }; S.save(); buzz(); render(); }));
       $$('[data-theme-set]', v).forEach((b) => (b.onclick = (e) => { const r = b.getBoundingClientRect(); document.documentElement.style.setProperty('--tx', `${e.clientX || r.left + r.width / 2}px`); document.documentElement.style.setProperty('--ty', `${e.clientY || r.top}px`); s.theme = b.dataset.themeSet; S.save(); FX.transition(() => { applyTheme(); render(); }, 'theme'); }));
       $('#cur', v).onchange = (e) => { s.cur = e.target.value; S.save(); };
+      const psw = $('#pushsw', v);
+      if (psw) psw.onclick = async () => {
+        psw.disabled = true;
+        try {
+          if (Push.status() === 'on') { await Push.disable(); toast('Notifications off'); }
+          else if (await Push.enable(nudgeText())) { toast('Notifications on'); track('push_on'); }
+          else toast('Notifications were not allowed');
+          for (const g of S.groupList()) if (g.live?.key) Sync.sync(g.id, { push: false });
+        } catch { toast('Could not turn on notifications. Try again.'); }
+        render();
+      };
       $('#restore', v).onchange = async (e) => {
         const f = e.target.files[0]; if (!f) return;
         try {
@@ -2051,6 +2073,8 @@ setTimeout(flushPhotos, 4000);
 initTelemetry(() => flag('telemetry'));
 track('open');
 loadFlagDefaults().then(() => { render(); if (st().me) runRepeats(); });
+// Keep the weekly nudge line current: at most once a day, when the app is opened.
+setTimeout(() => { if (Push.status() === 'on' && Date.now() - (st().settings.pushAt || 0) > 864e5) Push.register(nudgeText()).catch(() => {}); }, 3000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && st().me) runRepeats(); });
 // Ask the browser not to evict local data under storage pressure (local-first means this is the only copy).
 S.onChange(() => { if (!st().settings.persistAsked && navigator.storage?.persist) { st().settings.persistAsked = true; navigator.storage.persist().catch(() => {}); } });

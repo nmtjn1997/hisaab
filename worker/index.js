@@ -4,6 +4,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { cleanGroup, mergeGroup } from '../js/merge.js';
 import { diffEntry } from '../js/history.js';
 import { admit, guard, applyRoleOps, adminPids, pendingClaims } from '../js/access.js';
+import { sendPush, allowedEndpoint, pushLines } from '../js/webpush.js';
 
 const ORIGINS = [/^https:\/\/([\w-]+\.)?(hisaab-s4u|gethisaab)\.pages\.dev$/, /^https:\/\/nmtjn1997\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1):\d+$/];
 const MAX_BODY = 2_000_000;
@@ -15,7 +16,7 @@ const cors = (origin) => ({
   'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
 });
-const BUILD = 'roles-removed-3';
+const BUILD = 'push-1';
 const json = (data, status, origin) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Hisaab-Build': BUILD, ...cors(origin) } });
 
 async function sha256(s) {
@@ -55,7 +56,7 @@ export class GroupDO extends DurableObject {
   }
   // Durable Objects run one request at a time per group (input gate), so read-merge-write
   // below is atomic: two phones pushing at the same instant cannot overwrite each other.
-  async sync(keyHash, incoming, newHash, histSince = 0, dev = '', devFull = '', me = '', roleOps = null) {
+  async sync(keyHash, incoming, newHash, histSince = 0, dev = '', devFull = '', me = '', roleOps = null, pushSub = null) {
     const cur = await this.ctx.storage.get('g');
     if (cur && cur.keyHash !== keyHash) return { status: 403, body: { error: 'wrong key' } };
     // Roles: the first device (creator, or first one seen on an older group) is admin.
@@ -63,6 +64,8 @@ export class GroupDO extends DurableObject {
     let access = admit(prevAccess, devFull, me, !prevAccess || !Object.keys(prevAccess).length);
     const who = devFull && access[devFull] ? { pid: access[devFull].pid, admin: access[devFull].admin } : { pid: null, admin: false };
     if (roleOps) access = applyRoleOps(access, roleOps, who);
+    // This phone's push subscription id ('' = turned off), so the server can wake it when others write.
+    if (devFull && access[devFull] && pushSub !== null && (access[devFull].push || '') !== pushSub) access = { ...access, [devFull]: { ...access[devFull], push: pushSub || undefined } };
     const accessChanged = JSON.stringify(access) !== JSON.stringify(prevAccess || {});
     if (accessChanged) await this.ctx.storage.put('access', access);
     const mine = devFull ? access[devFull] : null;
@@ -83,6 +86,7 @@ export class GroupDO extends DurableObject {
     const before = cur?.data?.expenses || {};
     const data = mergeGroup(cur?.data || null, inc) || cleanGroup(null);
     const hist = (await this.ctx.storage.get('hist')) || { seq: 0, items: [] };
+    const seq0 = hist.seq;
     let wrote = false;
     // History is written HERE, from what the server actually accepted. Phones never send it.
     if (inc) for (const id in inc.expenses) {
@@ -100,7 +104,9 @@ export class GroupDO extends DurableObject {
     const rev = (cur?.rev || 0) + (changed ? 1 : 0);
     if (changed) await this.ctx.storage.put('g', { keyHash, data, rev, updatedAt: Date.now() });
     if (wrote) await this.ctx.storage.put('hist', hist);
-    return { status: 200, body: { rev, data, hist: hist.items.filter((h) => h.seq > histSince), roles, denied: g0.denied } };
+    const fresh = hist.items.filter((h) => h.seq > seq0);
+    const notify = fresh.length ? { subs: Object.entries(access).filter(([d, v]) => d !== devFull && v.push && !v.seat && !(data.meta?.removed || []).includes(v.pid)).map(([, v]) => v.push), lines: pushLines(fresh, data) } : null;
+    return { status: 200, body: { rev, data, hist: hist.items.filter((h) => h.seq > histSince), roles, denied: g0.denied }, notify };
   }
 }
 
@@ -198,6 +204,56 @@ async function logs(env, kind, limit) {
   return (await env.DB.prepare(sql).bind(n).all()).results;
 }
 
+// ---- Web Push ----
+const SUBJECT = 'https://gethisaab.pages.dev';
+const subId = async (endpoint) => (await sha256('P:' + endpoint)).slice(0, 32);
+async function readJSON(req, max = 4000) { const t = await req.text(); if (t.length > max) return null; try { return JSON.parse(t); } catch { return null; } }
+
+/** A phone registers (or drops) its subscription, with its next weekly nudge time and text. */
+async function pushSub(req, env, origin) {
+  if (await limited(req, env)) return json({ error: 'slow down' }, 429, origin);
+  const b = await readJSON(req);
+  if (!b || !allowedEndpoint(b.endpoint)) return json({ error: 'bad subscription' }, 400, origin);
+  const id = await subId(b.endpoint);
+  if (b.off) { await env.DB.batch([env.DB.prepare('DELETE FROM push_subs WHERE id = ?').bind(id), env.DB.prepare('DELETE FROM push_inbox WHERE sub = ?').bind(id)]); return json({ ok: true }, 200, origin); }
+  const at = Number.isFinite(+b.nudgeAt) && +b.nudgeAt > Date.now() - 864e5 && +b.nudgeAt < Date.now() + 30 * 864e5 ? Math.round(+b.nudgeAt) : null;
+  await env.DB.prepare('INSERT INTO push_subs (id, endpoint, nudge_at, nudge_text, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET endpoint = excluded.endpoint, nudge_at = excluded.nudge_at, nudge_text = excluded.nudge_text, at = excluded.at')
+    .bind(id, b.endpoint, at, at ? clip(b.nudgeText, 200) || null : null, Date.now()).run();
+  return json({ ok: true }, 200, origin);
+}
+
+/** A woken phone collects its messages. Knowing the endpoint is the proof that it is that phone. */
+async function pushInbox(req, env, origin) {
+  if (await limited(req, env)) return json({ error: 'slow down' }, 429, origin);
+  const b = await readJSON(req);
+  if (!b || !allowedEndpoint(b.endpoint)) return json({ error: 'bad subscription' }, 400, origin);
+  const id = await subId(b.endpoint);
+  const rows = (await env.DB.prepare('SELECT tag, title, body, url FROM push_inbox WHERE sub = ? ORDER BY ts LIMIT 20').bind(id).all()).results;
+  if (rows.length) await env.DB.prepare('DELETE FROM push_inbox WHERE sub = ?').bind(id).run();
+  return json({ items: rows }, 200, origin);
+}
+
+/** Queue a message per subscription, then wake those phones with an empty push. */
+async function deliver(env, ids, msg) {
+  const subs = (await env.DB.prepare(`SELECT id, endpoint FROM push_subs WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all()).results;
+  if (!subs.length) return;
+  // One waiting message per group per phone: a newer one replaces it, so a busy trip stays one notification.
+  await env.DB.batch(subs.flatMap((s) => [env.DB.prepare('DELETE FROM push_inbox WHERE sub = ? AND tag = ?').bind(s.id, msg.tag), env.DB.prepare('INSERT INTO push_inbox (sub, ts, tag, title, body, url) VALUES (?, ?, ?, ?, ?, ?)').bind(s.id, Date.now(), msg.tag, msg.title, msg.body, msg.url)]));
+  const gone = [];
+  await Promise.all(subs.map(async (s) => { const code = await sendPush(s.endpoint, env.VAPID_PUBLIC, env.VAPID_PRIVATE, SUBJECT).catch(() => 0); if (code === 404 || code === 410) gone.push(s.id); }));
+  if (gone.length) await env.DB.batch(gone.flatMap((id) => [env.DB.prepare('DELETE FROM push_subs WHERE id = ?').bind(id), env.DB.prepare('DELETE FROM push_inbox WHERE sub = ?').bind(id)]));
+}
+
+/** Hourly: send weekly "time to nudge" reminders that are due. Each phone re-sets its next one when opened. */
+async function nudges(env) {
+  if (!env.VAPID_PRIVATE) return;
+  const due = (await env.DB.prepare('SELECT id, nudge_text FROM push_subs WHERE nudge_at IS NOT NULL AND nudge_at <= ? LIMIT 500').bind(Date.now()).all()).results;
+  for (const s of due) {
+    await env.DB.prepare('UPDATE push_subs SET nudge_at = nudge_at + ? WHERE id = ?').bind(7 * 864e5, s.id).run();
+    await deliver(env, [s.id], { tag: 'nudge', title: 'Time to nudge', body: s.nudge_text || 'Some friends still owe you. Tap to remind them.', url: '#/people' });
+  }
+}
+
 export default {
   async fetch(req, env, ctx) {
     const origin = req.headers.get('Origin');
@@ -207,6 +263,8 @@ export default {
     if (path === '/version') return json({ build: BUILD }, 200, origin);
     if (path === '/t' && req.method === 'POST') return track(req, env, origin);
     if (path === '/e' && req.method === 'POST') return report(req, env, origin);
+    if (path === '/push/sub' && req.method === 'POST') return pushSub(req, env, origin);
+    if (path === '/push/inbox' && req.method === 'POST') return pushInbox(req, env, origin);
     if (path.startsWith('/admin/')) {
       if (!isAdmin(req, env)) return json({ error: 'unauthorized' }, 401, origin);
       if (path === '/admin/stats') return json(await stats(env, Math.max(1, Math.min(90, +url.searchParams.get('days') || 30))), 200, origin);
@@ -251,7 +309,9 @@ export default {
     const dev = (await sha256('d:' + (req.headers.get('X-Device') || req.headers.get('CF-Connecting-IP') || ''))).slice(0, 6);
     const devFull = req.headers.get('X-Device') ? await sha256('D:' + req.headers.get('X-Device')) : '';
     const me = /^[\w:-]{1,40}$/.test(req.headers.get('X-Me') || '') ? req.headers.get('X-Me') : '';
-    const r = await stub.sync(await sha256(key), body.data || null, nk ? await sha256(nk) : null, Math.max(0, +body.histSince || 0), dev, devFull, me, body.roles && typeof body.roles === 'object' ? body.roles : null);
+    const ps = typeof body.push === 'string' ? (allowedEndpoint(body.push) ? await subId(body.push) : '') : null;
+    const r = await stub.sync(await sha256(key), body.data || null, nk ? await sha256(nk) : null, Math.max(0, +body.histSince || 0), dev, devFull, me, body.roles && typeof body.roles === 'object' ? body.roles : null, ps);
+    if (r.notify?.subs.length && env.DB && env.VAPID_PRIVATE) ctx.waitUntil(deliver(env, r.notify.subs, { tag: 'g:' + m[1], url: '#/g/' + m[1], ...r.notify.lines }).catch(() => {}));
     // Sync health, keyed by a one-way hash of the group id: counts and timings, never content.
     if (env.DB) ctx.waitUntil((async () => {
       const gid = (await sha256('g:' + m[1])).slice(0, 12);
@@ -261,7 +321,9 @@ export default {
     })().catch(() => {}));
     return json(r.body, r.status, origin);
   },
-  async scheduled(_e, env) {
+  async scheduled(e, env) {
+    if (e.cron !== '17 3 * * *') return nudges(env);
+    await env.DB.prepare('DELETE FROM push_inbox WHERE ts < ?').bind(Date.now() - 7 * 864e5).run();
     const cut = day(Date.now() - 90 * 864e5);
     await env.DB.batch(['events', 'errors', 'syncs'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE day < ?`).bind(cut)));
   },

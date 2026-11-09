@@ -23,7 +23,7 @@ git commit -q --no-verify -m "${1:-Update}" -m "Co-Authored-By: Claude Opus 5.5 
 GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p') git push -q origin main || echo "GitHub push failed (network); it goes out with the next deploy"
 out=$(mktemp -d)
 # Server: only when its code changed (worker/ or the shared merge/history logic), and never hang the deploy.
-wsum=$(cat worker/index.js worker/wrangler.toml js/merge.js js/history.js | shasum | cut -c1-12)
+wsum=$(cat worker/index.js worker/wrangler.toml js/merge.js js/history.js js/access.js js/webpush.js js/money.js | shasum | cut -c1-12)
 if [ "$wsum" != "$(cat .worker-sum 2>/dev/null)" ]; then
   (cd worker && run_for 150 wrangler deploy) && echo "$wsum" > .worker-sum && echo "server deployed" || echo "server deploy skipped or failed"
 fi

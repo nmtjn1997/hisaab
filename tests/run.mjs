@@ -566,3 +566,40 @@ t('roles: a removed person cannot add or change anything', () => {
   assert.deepEqual(r.denied.sort(), ['e1', 'e9']);
   assert.deepEqual(r.inc.expenses, {});
 });
+
+import { vapidJWT, allowedEndpoint } from '../js/webpush.js';
+import { readFileSync } from 'node:fs';
+t('web push: VAPID JWT verifies with the public key; only real push services allowed', async () => {
+  const { pub, jwk } = JSON.parse(readFileSync(new URL('../.vapid.json', import.meta.url)));
+  const jwt = await vapidJWT('https://fcm.googleapis.com', jwk, 'https://gethisaab.pages.dev');
+  const [h, c, s] = jwt.split('.');
+  const key = await crypto.subtle.importKey('raw', Buffer.from(pub, 'base64url'), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, Buffer.from(s, 'base64url'), new TextEncoder().encode(`${h}.${c}`));
+  assert.ok(ok);
+  const claims = JSON.parse(Buffer.from(c, 'base64url'));
+  assert.equal(claims.aud, 'https://fcm.googleapis.com');
+  assert.ok(allowedEndpoint('https://fcm.googleapis.com/fcm/send/abc'));
+  assert.ok(allowedEndpoint('https://web.push.apple.com/QK'));
+  assert.ok(!allowedEndpoint('https://evil.example.com/x'));
+  assert.ok(!allowedEndpoint('http://fcm.googleapis.com/x'));
+});
+
+import { pushLines } from '../js/webpush.js';
+t('push: notification text names who did what, caps long batches, uses the group currency', () => {
+  const data = { name: 'Nainital', people: { a: { name: 'Deepak Kumar' } }, meta: { cur: '$' } };
+  const r = pushLines([{ by: 'a', kind: 'add', desc: 'Dinner', amount: 120000 }], data);
+  assert.equal(r.title, 'Nainital');
+  assert.equal(r.body, 'Deepak added Dinner · $1,200');
+  const many = Array.from({ length: 7 }, (_, i) => ({ by: 'zz', kind: 'delete', desc: 'x' + i, amount: 100 }));
+  const m = pushLines(many, { name: 'T', people: {} });
+  assert.equal(m.body.split('\n').length, 5);
+  assert.match(m.body, /^Someone deleted x3 · ₹1/);
+  assert.match(m.body, /and 3 more$/);
+});
+import { nextNudgeAt } from '../js/webpush.js';
+t('push: weekly nudge lands on the next Sunday 10:00 local', () => {
+  const at = (s) => new Date(nextNudgeAt(new Date(s)));
+  assert.equal(at('2026-11-08T09:00:00').toString(), new Date('2026-11-08T10:00:00').toString()); // Sunday, before 10
+  assert.equal(at('2026-11-08T10:00:00').toString(), new Date('2026-11-15T10:00:00').toString()); // Sunday at 10: next week
+  assert.equal(at('2026-11-11T18:30:00').toString(), new Date('2026-11-15T10:00:00').toString()); // Wednesday
+});
