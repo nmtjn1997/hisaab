@@ -1962,7 +1962,7 @@ const ACT = {
       sheet(`<h3>${esc(g.name)}</h3><p class="muted small">${ADMIN_ONLY}: rename, trip settings, people and the invite link. Ask ${(g.live?.admins || []).filter((p) => p !== st().me).map((p) => esc(S.firstName(p))).join(' or ') || 'the creator'}.</p>
         <div class="btns" style="margin-top:12px"><button class="btn" data-x="arch">${g.archived ? 'Unarchive' : 'Archive'}</button><button class="btn danger" data-x="del">${icon('trash', 'sm')} Remove from this phone</button></div>`, (el, close) => {
         el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; S.save(); close(); go('/groups'); };
-        el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Remove ${g.name} from this phone?`, 'The group stays for everyone else. You can rejoin with the link.', 'Remove', () => { g.deleted = true; S.save(); go('/groups'); }); };
+        el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Remove ${g.name} from this phone?`, 'The group stays for everyone else. You can rejoin with the link.', 'Remove', () => { g.deleted = true; S.save(); if (g.live?.key) Sync.sync(g.id, { push: false }); go('/groups'); }); };
       });
       return;
     }
@@ -2051,7 +2051,7 @@ const ACT = {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   },
-  wipe: () => confirmSheet('Erase everything?', 'All groups, people and expenses on this phone will be deleted. Export a backup first if unsure.', 'Erase', () => { localStorage.removeItem('hisaab:v1'); indexedDB.deleteDatabase('hisaab'); location.hash = '#/welcome'; location.reload(); }),
+  wipe: () => confirmSheet('Erase everything?', 'All groups, people and expenses on this phone will be deleted. Export a backup first if unsure.', 'Erase', async () => { await Promise.race([Push.disable().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]); localStorage.removeItem('hisaab:v1'); indexedDB.deleteDatabase('hisaab'); location.hash = '#/welcome'; location.reload(); }),
 };
 
 let lastClick = 0;

@@ -105,7 +105,7 @@ export function sync(gid, { push = true } = {}) {
       // Push only when this phone has something new; otherwise just pull (cheap, never rate-limited).
       const roles = g.live.pendingRoles || null;
       push = push === 'force' || !!roles || (push && sent !== g.live.sig);
-      const body = JSON.stringify({ ...(push ? { data: payload(gid) } : {}), ...(roles ? { roles } : {}), ...(typeof S.state.settings.push === 'string' ? { push: S.state.settings.push } : {}), histSince: g.live.histSeq || 0 });
+      const body = JSON.stringify({ ...(push ? { data: payload(gid) } : {}), ...(roles ? { roles } : {}), ...(typeof S.state.settings.push === 'string' ? { push: g.deleted ? '' : S.state.settings.push } : {}), histSince: g.live.histSeq || 0 });
       const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': g.live.key, 'X-Device': device(), 'X-Me': toRemote(g)(S.state.me) }, body });
       if (r.status === 429) { again.add(gid); wait = 3000; return { ok: false, error: 'Busy, will retry' }; }
       if (r.status === 403) { g.live.error = 'This live link was replaced'; S.save(); return { ok: false, error: g.live.error }; }

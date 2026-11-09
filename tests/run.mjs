@@ -615,3 +615,16 @@ t('restore: a backup never brings another phone\'s push subscription', () => {
   assert.equal(Store.state.settings.theme, 'light');
   assert.equal(Store.state.settings.pushAt, undefined);
 });
+
+const SyncM = await import('../js/sync.js');
+t('push: a live group removed from this phone tells the server to stop pinging it', async () => {
+  const sent = [];
+  globalThis.navigator ||= { onLine: true };
+  globalThis.fetch = async (url, o) => { sent.push(JSON.parse(o.body)); return { ok: true, status: 200, json: async () => ({ data: null, hist: [] }) }; };
+  Store.state.settings.push = 'https://fcm.googleapis.com/fcm/send/P';
+  Store.state.groups.lg = { id: 'lg', name: 'Trip', members: [], live: { key: 'k'.repeat(24), map: {} } };
+  await SyncM.sync('lg', { push: false });
+  Store.state.groups.lg.deleted = true;
+  await SyncM.sync('lg', { push: false });
+  assert.deepEqual(sent.map((b) => b.push), ['https://fcm.googleapis.com/fcm/send/P', '']);
+});

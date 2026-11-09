@@ -37,6 +37,7 @@ export async function enable(nudgeText) {
 
 export async function disable() {
   const endpoint = S.state.settings.push;
+  if (!endpoint) return; // never switched on here
   S.state.settings.push = ''; // live groups learn it on their next sync
   S.save();
   const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription().catch(() => null);

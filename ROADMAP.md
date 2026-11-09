@@ -9,6 +9,8 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Done
 
+- 2026-11-09 Notifications stop when they should: removing a live group from this phone tells the server to stop pinging it, and "Erase everything" turns notifications off first (an erased phone used to keep getting pings and the weekly nudge).
+
 - 2026-11-09 Restoring a backup keeps this phone's own notification subscription (it used to bring the old phone's, so live-group pings went to the wrong device), and backups no longer include it.
 
 - 2026-11-09 Android notifications: PNG icon instead of SVG (Chrome cannot draw SVG there), no colour badge (showed as a blank square), and tapping a notification opens the app even when the open tab is not controlled by the service worker.
