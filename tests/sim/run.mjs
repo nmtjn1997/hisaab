@@ -54,8 +54,7 @@ async function nainital() {
   const safari = dn[0].canon.find((c) => c.includes('|Safari|')).split('|')[0];
   await deepak.call('edit', { id: safari, amount: 400000, removeMe: true });
   await namit.call('settle');
-  const rv = await namit.call('revert', { id: safari });
-  console.log('Namit sees the change in history and reverts it:', rv);
+  console.log('Deepak is a member, so the server refused his edit of Namit\'s Safari entry.');
   const dumps = await converge([namit, deepak]);
   const [a] = dumps;
   console.log(`\nBoth phones identical: ${a.count} expenses, total ${rupee(a.total)}`);
@@ -66,7 +65,7 @@ async function nainital() {
   console.log(`History for Safari on Namit's phone: ${flagged.length} edits recorded by the server`, flagged.map((h) => ({ by: h.by === g.people.Jeeju ? 'Jeeju' : 'Namit', changes: Object.keys(h.changes), dev: h.dev })));
   assert.equal(a.count, 17);
   assert.equal(owe, 686000);
-  assert.ok(flagged.length >= 2);
+  assert.equal(flagged.length, 0); // refused edits never reach history
   console.log(`\nOpen it yourself: http://127.0.0.1:5179/#/join/${g.gid}~${g.key}?as=${g.people.Namit}`);
   console.log('\nStats:', dumps.map((d, i) => `${[namit, deepak][i].name}: ${d.stats.requests} syncs, avg ${d.stats.avg.toFixed(0)} ms, max ${d.stats.max.toFixed(0)} ms, failed ${d.stats.failed}`).join(' | '));
   [namit, deepak].forEach((p) => p.stop());
@@ -110,6 +109,54 @@ async function stress() {
   phones.forEach((p) => p.stop());
 }
 
-await (mode === 'stress' ? stress() : nainital());
+async function roles() {
+  const namit = phone('Namit'), deepak = phone('Deepak');
+  await Promise.all([namit.ready, deepak.ready]);
+  const g = await namit.call('create', { name: 'Goa', me: 'Namit', others: ['Deepak'] });
+  await deepak.call('join', { gid: g.gid, key: g.key, as: g.people.Deepak });
+  const { id: nid } = await namit.call('add', { text: 'hotel 6000 split with everyone' });
+  await converge([namit, deepak]);
+  console.log('Roles:', { namit: (await namit.call('role')).admin, deepak: (await deepak.call('role')).admin });
+  assert.equal((await namit.call('role')).admin, true);
+  assert.equal((await deepak.call('role')).admin, false);
+  // Member tries to lower the admin's entry and rename the group: server refuses, phone reverts.
+  await deepak.call('edit', { id: nid, amount: 100000 });
+  await deepak.call('rename', { name: 'Hacked' });
+  let d = await converge([namit, deepak]);
+  const row = d[0].canon.find((c) => c.startsWith(nid));
+  console.log('After member edit attempt:', row.split('|').slice(2, 4).join(' '), '| group name on Deepak:', (await deepak.call('role')).name);
+  assert.ok(row.includes('|600000|'));
+  assert.equal((await deepak.call('role')).name, 'Goa');
+  // Member adds and edits their own entry: allowed.
+  const { id: did } = await deepak.call('add', { text: 'cab 500 split with everyone' });
+  await deepak.call('edit', { id: did, amount: 70000 });
+  d = await converge([namit, deepak]);
+  assert.ok(d[0].canon.find((c) => c.startsWith(did)).includes('|70000|'));
+  console.log('Member edited own entry: ok');
+  // Admin promotes Deepak; now his edit of Namit's entry goes through.
+  await namit.call('promote', { name: 'Deepak' });
+  await deepak.call('settle');
+  console.log('Deepak admin now:', (await deepak.call('role')).admin);
+  await deepak.call('edit', { id: nid, amount: 500000 });
+  d = await converge([namit, deepak]);
+  assert.ok(d[0].canon.find((c) => c.startsWith(nid)).includes('|500000|'));
+  console.log('Promoted member edited the admin entry: ok');
+  // A new phone claims to be Namit: it waits for approval and cannot touch Namit's entries.
+  const fake = phone('Fake');
+  await fake.ready;
+  await fake.call('join', { gid: g.gid, key: g.key, as: g.people.Namit });
+  console.log('Phone claiming Namit:', await fake.call('role').then((r) => ({ admin: r.admin, waitingToBe: r.wants ? 'Namit' : null })));
+  await fake.call('edit', { id: nid, amount: 100 });
+  d = await converge([namit, deepak, fake]);
+  assert.ok(d[0].canon.find((c) => c.startsWith(nid)).includes('|500000|'));
+  console.log('Its edit of Namit\'s entry was refused');
+  await namit.call('approveAll');
+  await fake.call('settle');
+  assert.equal((await fake.call('role')).wants, null);
+  console.log('Namit approved it; waiting cleared');
+  [namit, deepak, fake].forEach((p) => p.stop());
+}
+
+await (mode === 'stress' ? stress() : mode === 'roles' ? roles() : nainital());
 console.log('\nPASS');
 process.exit(0);

@@ -1,6 +1,6 @@
 // Offline: stale-while-revalidate for the app shell and fonts. Bump VERSION on every deploy.
-const VERSION = 'h-2611072050';
-const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/money.js', 'js/parse.js', 'js/store.js', 'js/share.js', 'js/receipt.js', 'js/icons.js', 'js/sync.js', 'js/merge.js', 'js/flags.js', 'js/repeat.js', 'js/fx.js', 'js/card.js', 'js/telemetry.js', 'js/history.js', 'js/search.js', 'flags.json', 'manifest.webmanifest', 'assets/icon.svg'];
+const VERSION = 'h-2611092136';
+const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/money.js', 'js/parse.js', 'js/store.js', 'js/share.js', 'js/receipt.js', 'js/icons.js', 'js/sync.js', 'js/merge.js', 'js/flags.js', 'js/repeat.js', 'js/fx.js', 'js/card.js', 'js/telemetry.js', 'js/history.js', 'js/search.js', 'js/access.js', 'flags.json', 'manifest.webmanifest', 'assets/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

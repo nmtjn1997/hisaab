@@ -32,7 +32,7 @@ export function payload(gid) {
   for (const e of exps) { const { gid: _g, imported: _i, ...rest } = mapExp(e, f); expenses[rest.id] = rest; }
   const comments = {};
   for (const c of Object.values(st.comments || {})) if (c.gid === gid) { const { gid: _g, ...rest } = c; comments[c.id] = { ...rest, by: f(c.by) }; }
-  const meta = g.metaAt ? { cur: g.cur || null, budget: g.budget || null, start: g.start || null, end: g.end || null, at: g.metaAt } : null;
+  const meta = g.metaAt ? { removed: (g.removed || []).map(f), cur: g.cur || null, budget: g.budget || null, start: g.start || null, end: g.end || null, at: g.metaAt } : null;
   return { name: g.name, nameAt: g.nameAt || g.createdAt || 0, members: g.members.map(f), people, expenses, comments, meta };
 }
 
@@ -64,8 +64,10 @@ export function apply(gid, raw) {
   }
   const members = data.members.map(f);
   for (const m of members) if (!g.members.includes(m)) { g.members.push(m); changed++; }
-  if (data.meta && (data.meta.at || 0) > (g.metaAt || 0)) { Object.assign(g, { cur: data.meta.cur, budget: data.meta.budget, start: data.meta.start, end: data.meta.end, metaAt: data.meta.at }); changed++; }
-  if ((data.nameAt || 0) > (g.nameAt || 0)) { g.name = data.name; g.nameAt = data.nameAt; changed++; }
+  // Members cannot change group settings, so the server's copy always wins on their phones.
+  const member = g.live?.admin === false;
+  if (data.meta && (member ? JSON.stringify(data.meta) !== JSON.stringify(g.metaSeen || null) : (data.meta.at || 0) > (g.metaAt || 0))) { g.metaSeen = data.meta; Object.assign(g, { removed: (data.meta.removed || []).map(f), cur: data.meta.cur, budget: data.meta.budget, start: data.meta.start, end: data.meta.end, metaAt: data.meta.at }); changed++; }
+  if ((data.nameAt || 0) > (g.nameAt || 0) || (member && (data.name !== g.name || data.nameAt !== g.nameAt))) { g.name = data.name; g.nameAt = data.nameAt; changed++; }
   return changed;
 }
 
@@ -101,14 +103,23 @@ export function sync(gid, { push = true } = {}) {
     try {
       const sent = sig(gid);
       // Push only when this phone has something new; otherwise just pull (cheap, never rate-limited).
-      push = push === 'force' || (push && sent !== g.live.sig);
-      const body = JSON.stringify({ ...(push ? { data: payload(gid) } : {}), histSince: g.live.histSeq || 0 });
-      const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': g.live.key, 'X-Device': device() }, body });
+      const roles = g.live.pendingRoles || null;
+      push = push === 'force' || !!roles || (push && sent !== g.live.sig);
+      const body = JSON.stringify({ ...(push ? { data: payload(gid) } : {}), ...(roles ? { roles } : {}), histSince: g.live.histSeq || 0 });
+      const r = await fetch(API + gid, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Key': g.live.key, 'X-Device': device(), 'X-Me': toRemote(g)(S.state.me) }, body });
       if (r.status === 429) { again.add(gid); wait = 3000; return { ok: false, error: 'Busy, will retry' }; }
       if (r.status === 403) { g.live.error = 'This live link was replaced'; S.save(); return { ok: false, error: g.live.error }; }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const { data, hist } = await r.json();
-      const changed = apply(gid, data) + applyHistory(gid, hist);
+      const { data, hist, roles: rr, denied } = await r.json();
+      if (roles) delete g.live.pendingRoles;
+      if (rr) {
+        g.live.admin = !!rr.me?.admin; g.live.admins = (rr.admins || []).map(toLocal(g));
+        g.live.wants = rr.me?.wants ? toLocal(g)(rr.me.wants) : null; g.live.rejected = !!rr.me?.rejected;
+        g.live.pending = (rr.pending || []).map((p) => ({ ...p, wants: toLocal(g)(p.wants) }));
+      }
+      const refused = revertDenied(gid, data, denied);
+      const changed = apply(gid, data) + applyHistory(gid, hist) + refused;
+      if (refused) g.live.denied = { n: refused, at: Date.now() };
       if (push) g.live.sig = sent;
       if (sig(gid) !== g.live.sig) again.add(gid); // something changed while we were away
       g.live.syncedAt = Date.now();
@@ -125,6 +136,18 @@ export function sync(gid, { push = true } = {}) {
   })();
   inflight.set(gid, p);
   return p;
+}
+
+// The server refused some of this phone's changes (not allowed by group roles): put its copy back.
+function revertDenied(gid, data, denied) {
+  if (!Array.isArray(denied) || !denied.length) return 0;
+  const st = S.state, g = st.groups[gid], f = toLocal(g);
+  for (const id of denied) {
+    const srv = data.expenses?.[id];
+    if (srv) st.expenses[id] = { ...mapExp(srv, f), gid, receiptId: srv.receiptId || st.expenses[id]?.receiptId };
+    else delete st.expenses[id];
+  }
+  return denied.length;
 }
 
 // Server-written history, translated to this phone's ids.

@@ -3,6 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { cleanGroup, mergeGroup } from '../js/merge.js';
 import { diffEntry } from '../js/history.js';
+import { admit, guard, applyRoleOps, adminPids, pendingClaims } from '../js/access.js';
 
 const ORIGINS = [/^https:\/\/([\w-]+\.)?(hisaab-s4u|gethisaab)\.pages\.dev$/, /^https:\/\/nmtjn1997\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1):\d+$/];
 const MAX_BODY = 2_000_000;
@@ -10,11 +11,12 @@ const MAX_BODY = 2_000_000;
 const cors = (origin) => ({
   'Access-Control-Allow-Origin': ORIGINS.some((r) => r.test(origin || '')) ? origin : 'https://gethisaab.pages.dev',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Key, X-New-Key, X-Device, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Key, X-New-Key, X-Device, X-Me, Authorization',
   'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
 });
-const json = (data, status, origin) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors(origin) } });
+const BUILD = 'roles-claims-1';
+const json = (data, status, origin) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Hisaab-Build': BUILD, ...cors(origin) } });
 
 async function sha256(s) {
   const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -53,9 +55,19 @@ export class GroupDO extends DurableObject {
   }
   // Durable Objects run one request at a time per group (input gate), so read-merge-write
   // below is atomic: two phones pushing at the same instant cannot overwrite each other.
-  async sync(keyHash, incoming, newHash, histSince = 0, dev = '') {
+  async sync(keyHash, incoming, newHash, histSince = 0, dev = '', devFull = '', me = '', roleOps = null) {
     const cur = await this.ctx.storage.get('g');
     if (cur && cur.keyHash !== keyHash) return { status: 403, body: { error: 'wrong key' } };
+    // Roles: the first device (creator, or first one seen on an older group) is admin.
+    const prevAccess = await this.ctx.storage.get('access');
+    let access = admit(prevAccess, devFull, me, !prevAccess || !Object.keys(prevAccess).length);
+    const who = devFull && access[devFull] ? { pid: access[devFull].pid, admin: access[devFull].admin } : { pid: null, admin: false };
+    if (roleOps) access = applyRoleOps(access, roleOps, who);
+    const accessChanged = JSON.stringify(access) !== JSON.stringify(prevAccess || {});
+    if (accessChanged) await this.ctx.storage.put('access', access);
+    const mine = devFull ? access[devFull] : null;
+    const roles = { me: { ...who, wants: mine?.wants || null, rejected: !!mine?.rejected }, admins: adminPids(access), ...(who.admin ? { pending: pendingClaims(access) } : {}) };
+    if (newHash && !who.admin) return { status: 403, body: { error: 'only admins can reset the link' } };
     // Only real changes count against the 120-a-minute write budget; re-sends of known data are free.
     const budget = () => {
       const now = Date.now();
@@ -65,8 +77,9 @@ export class GroupDO extends DurableObject {
       return true;
     };
     if (newHash && !budget()) return { status: 429, body: { error: 'slow down' } };
-    if (newHash && cur) { cur.keyHash = newHash; await this.ctx.storage.put('g', cur); return { status: 200, body: { rev: cur.rev, data: cur.data } }; }
-    const inc = incoming ? cleanGroup(incoming) : null;
+    if (newHash && cur) { cur.keyHash = newHash; await this.ctx.storage.put('g', cur); return { status: 200, body: { rev: cur.rev, data: cur.data, roles } }; }
+    const g0 = incoming ? guard(cur?.data || null, cleanGroup(incoming), who) : { inc: null, denied: [] };
+    const inc = g0.inc;
     const before = cur?.data?.expenses || {};
     const data = mergeGroup(cur?.data || null, inc) || cleanGroup(null);
     const hist = (await this.ctx.storage.get('hist')) || { seq: 0, items: [] };
@@ -87,7 +100,7 @@ export class GroupDO extends DurableObject {
     const rev = (cur?.rev || 0) + (changed ? 1 : 0);
     if (changed) await this.ctx.storage.put('g', { keyHash, data, rev, updatedAt: Date.now() });
     if (wrote) await this.ctx.storage.put('hist', hist);
-    return { status: 200, body: { rev, data, hist: hist.items.filter((h) => h.seq > histSince) } };
+    return { status: 200, body: { rev, data, hist: hist.items.filter((h) => h.seq > histSince), roles, denied: g0.denied } };
   }
 }
 
@@ -191,6 +204,7 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(origin) });
     const url = new URL(req.url);
     const path = url.pathname;
+    if (path === '/version') return json({ build: BUILD }, 200, origin);
     if (path === '/t' && req.method === 'POST') return track(req, env, origin);
     if (path === '/e' && req.method === 'POST') return report(req, env, origin);
     if (path.startsWith('/admin/')) {
@@ -235,7 +249,9 @@ export default {
     const nk = req.headers.get('X-New-Key');
     if (nk && (nk.length < 16 || nk.length > 64)) return json({ error: 'bad key' }, 400, origin);
     const dev = (await sha256('d:' + (req.headers.get('X-Device') || req.headers.get('CF-Connecting-IP') || ''))).slice(0, 6);
-    const r = await stub.sync(await sha256(key), body.data || null, nk ? await sha256(nk) : null, Math.max(0, +body.histSince || 0), dev);
+    const devFull = req.headers.get('X-Device') ? await sha256('D:' + req.headers.get('X-Device')) : '';
+    const me = /^[\w:-]{1,40}$/.test(req.headers.get('X-Me') || '') ? req.headers.get('X-Me') : '';
+    const r = await stub.sync(await sha256(key), body.data || null, nk ? await sha256(nk) : null, Math.max(0, +body.histSince || 0), dev, devFull, me, body.roles && typeof body.roles === 'object' ? body.roles : null);
     // Sync health, keyed by a one-way hash of the group id: counts and timings, never content.
     if (env.DB) ctx.waitUntil((async () => {
       const gid = (await sha256('g:' + m[1])).slice(0, 12);

@@ -82,6 +82,10 @@ const handlers = {
     await syncTimed();
     return { reverted: h.seq };
   },
+  async rename({ name }) { const g = st().groups[gid]; g.name = name; g.nameAt = Date.now() + 1; S.save(); await syncTimed(); return {}; },
+  async promote({ name }) { const g = st().groups[gid]; const pid = Object.values(st().people).find((p) => p.name === name).id; g.live.pendingRoles = { admins: { [Sync.remoteId(gid, pid)]: true } }; await Sync.sync(gid, { push: 'force' }); return {}; },
+  async role() { const g = st().groups[gid]; return { admin: g.live.admin, admins: g.live.admins, name: g.name, wants: g.live.wants, pending: g.live.pending }; },
+  async approveAll() { const g = st().groups[gid]; await syncTimed({ push: false }); g.live.pendingRoles = { approve: (g.live.pending || []).map((p) => p.id) }; await Sync.sync(gid, { push: 'force' }); return { approved: g.live.pendingRoles ? 0 : 1 }; },
   async del({ id }) { S.softDelete(id); await syncTimed(); return { ok: true }; },
   async pull() { await syncTimed({ push: false }); return {}; },
   async settle() { await settle(); return {}; },

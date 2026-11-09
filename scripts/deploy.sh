@@ -32,7 +32,7 @@ rsync -a --exclude worker --exclude .git --exclude .claude --exclude tests --exc
 marker=$(sed -n "s/^const VERSION = '\(.*\)';/\1/p" sw.js)
 for proj in gethisaab hisaab; do
   host=$([ "$proj" = hisaab ] && echo hisaab-s4u || echo gethisaab)
-  run_for 150 wrangler pages deploy "$out" --project-name $proj --branch main --commit-dirty=true
+  run_for 150 wrangler pages deploy "$out" --project-name $proj --branch main --commit-dirty=true || true
   if curl -s -m 20 "https://$host.pages.dev/sw.js" | grep -q "$marker"; then echo "live: https://$host.pages.dev ($marker)"; else echo "NOT live yet: https://$host.pages.dev"; fi
 done
 rm -rf "$out"

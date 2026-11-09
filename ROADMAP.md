@@ -9,6 +9,7 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
 
 ## Done
+- 2026-11-09 Group roles (enforced by the sync server): creator's phone is admin; admins add or remove people, rename, change trip settings and the link, edit or delete anyone's entry, and make other admins; members add entries and edit their own; refused changes are undone on the phone with a message. A phone claiming a name already in use waits for an admin to approve it (server code stored; waiting on Cloudflare to start serving it). Roles scenario added to the multi-phone simulator.
 - 2026-11-07 Time to nudge: Home card for people who have owed you 7+ days (counted from after their last settle-up) and were not reminded this week, one-tap WhatsApp reminder, last reminded shown. Deploy script uses a wall-clock watchdog that survives laptop sleep.
 - 2026-11-07 Bill photos in live groups: stored with the group on the sync server (chunked, same group key, 1.5 MB and 300 photo caps, images only), uploaded in the background with a retry queue, fetched and cached when a friend opens the expense; going live uploads existing photos.
 - 2026-11-07 Spreadsheet export: a group as CSV in Splitwise's layout (per-person nets, Total balance row), opens in Excel and Google Sheets and imports back into Splitwise or Hisaab; formula-looking text neutralised. Deploy script skips an unchanged server and never hangs on a failed push.

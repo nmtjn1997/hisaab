@@ -509,3 +509,37 @@ t('nudges: owed 7+ days and not reminded this week', () => {
   assert.equal(by.x, undefined); // I owe x, not a nudge
   assert.equal(dueNudges({ r: 500 }, ex, 'me', {}, now)[0].due, true);
 });
+
+import { admit, guard, applyRoleOps, adminPids, pendingClaims } from '../js/access.js';
+t('roles: creator is admin, members add and edit only their own', () => {
+  let acc = admit(null, 'devA', 'namit', true);
+  acc = admit(acc, 'devB', 'deepak', false);
+  const A = { pid: 'namit', admin: acc.devA.admin }, B = { pid: 'deepak', admin: acc.devB.admin };
+  assert.equal(A.admin, true); assert.equal(B.admin, false);
+  const stored = { name: 'Trip', nameAt: 1, members: ['namit', 'deepak'], people: { namit: { name: 'Namit' }, deepak: { name: 'Deepak' } }, meta: null,
+    expenses: { e1: { id: 'e1', by: 'namit', amount: 600, paid: { namit: 600 }, owed: { namit: 300, deepak: 300 }, updatedAt: 1 }, e2: { id: 'e2', by: 'deepak', amount: 100, paid: { deepak: 100 }, owed: { deepak: 100 }, updatedAt: 1 } }, comments: {} };
+  const inc = { ...stored, name: 'Hacked', nameAt: 9, members: ['namit', 'deepak', 'stranger'],
+    expenses: { e1: { ...stored.expenses.e1, amount: 1, updatedAt: 5 }, e2: { ...stored.expenses.e2, amount: 200, updatedAt: 5 },
+      e3: { id: 'e3', by: 'deepak', amount: 50, paid: { deepak: 50 }, owed: { namit: 25, deepak: 25 }, updatedAt: 5 },
+      e4: { id: 'e4', by: 'deepak', amount: 50, paid: { deepak: 50 }, owed: { ghost: 50 }, updatedAt: 5 } } };
+  const r = guard(stored, inc, B);
+  assert.deepEqual(r.denied.sort(), ['e1', 'e4']);          // someone else's entry, unknown person
+  assert.equal(r.inc.expenses.e2.amount, 200);              // own entry ok
+  assert.ok(r.inc.expenses.e3);                             // new entry ok
+  assert.equal(r.inc.name, 'Trip');                         // no rename
+  assert.deepEqual(r.inc.members, ['namit', 'deepak']);     // no adding people
+  assert.deepEqual(guard(stored, inc, A).denied, []);       // admin can do all of it
+  const acc2 = applyRoleOps(acc, { admins: { deepak: true } }, B); // member cannot promote
+  assert.equal(acc2.devB.admin, false);
+  const acc3 = applyRoleOps(acc, { admins: { deepak: true } }, A);
+  assert.deepEqual(adminPids(acc3).sort(), ['deepak', 'namit']);
+  assert.equal(applyRoleOps(acc, { admins: { namit: false } }, A).devA.admin, true); // never zero admins
+  const late = admit(acc, 'devC', 'namit', false);          // new phone claiming someone else's name
+  assert.equal(late.devC.admin, false);
+  assert.equal(late.devC.pid, null);                        // cannot edit Namit's entries yet
+  assert.equal(guard(stored, inc, { pid: late.devC.pid, admin: false }).inc.expenses.e2, undefined); // not even Deepak's
+  assert.deepEqual(pendingClaims(late), [{ id: 'devC', wants: 'namit', at: late.devC.at }]);
+  const ok = applyRoleOps(late, { approve: ['devC'] }, A);
+  assert.equal(ok.devC.pid, 'namit');
+  assert.equal(applyRoleOps(late, { approve: ['devC'] }, B).devC.pid, null); // members cannot approve
+});

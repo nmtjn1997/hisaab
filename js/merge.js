@@ -63,7 +63,7 @@ export function cleanGroup(g) {
   }
   const CURS = new Set(['₹', '$', '€', '£', 'AED ', 'S$', '฿', '¥', 'Rp ', 'RM ', 'A$', 'C$', 'NPR ', 'LKR ']);
   const m = g.meta && typeof g.meta === 'object' ? g.meta : null;
-  const meta = m ? { cur: CURS.has(m.cur) ? m.cur : null, budget: m.budget ? Math.max(0, int(m.budget)) : null, start: m.start ? int(m.start) : null, end: m.end ? int(m.end) : null, at: int(m.at) } : null;
+  const meta = m ? { removed: (Array.isArray(m.removed) ? m.removed : []).filter((x) => ID.test(x)).slice(0, 200), cur: CURS.has(m.cur) ? m.cur : null, budget: m.budget ? Math.max(0, int(m.budget)) : null, start: m.start ? int(m.start) : null, end: m.end ? int(m.end) : null, at: int(m.at) } : null;
   return {
     meta,
     comments,

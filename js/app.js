@@ -84,7 +84,16 @@ function confirmSheet(title, body, okLabel, onOk, danger = true) {
 }
 
 // ---------- domain helpers ----------
-const memberList = (gid) => (st().groups[gid]?.members || []).filter((id) => st().people[id] && !st().people[id].deleted);
+const memberList = (gid) => (st().groups[gid]?.members || []).filter((id) => st().people[id] && !st().people[id].deleted && !(st().groups[gid]?.removed || []).includes(id));
+// Roles (live groups): admins manage people and settings and can change any entry; members add
+// entries and change only their own. The server enforces this; the UI just hides what will be refused.
+// Until the server confirms a role, a live group shows the member view (never more than allowed).
+const isAdmin = (gid) => { const l = st().groups[gid]?.live; return !l?.key || l.admin === true; };
+// For yourself, the badge follows this phone's real role (another phone using your name may be admin).
+const isAdminPid = (gid, pid) => { const l = st().groups[gid]?.live; return !!l?.key && (pid === st().me ? l.admin === true : (l.admins || []).includes(pid)); };
+// A phone still waiting for an admin to confirm who it is can only add new entries.
+const canEditExp = (e) => !!e && (isAdmin(e.gid) || (!st().groups[e.gid]?.live?.wants && !st().groups[e.gid]?.live?.rejected && (!e.by || e.by === st().me)));
+const ADMIN_ONLY = 'Only group admins can do this';
 const peopleArr = () => Object.values(st().people).filter((p) => !p.deleted).map((p) => (p.id === st().me ? { ...p, aliases: ['me'] } : p));
 function myGroupNet(gid) { return S.groupBalances(gid)[st().me] || 0; }
 function personNets() { return pairwise(S.allExpenses().filter(sameCur), st().me); }
@@ -397,6 +406,8 @@ function schedulePush() {
   }, 1200);
 }
 function refreshIfShowing(gid) {
+  const l = st().groups[gid]?.live;
+  if (l?.denied && Date.now() - l.denied.at < 10000) { toast(`${ADMIN_ONLY}: only admins can change other people's entries or the group. Your change was undone.`, { ms: 6000 }); delete l.denied; }
   const { path } = parseHash();
   if (closeSheet || /^\/(add|e\/\w+\/edit)/.test(path)) return;
   if (path === '/' || path.startsWith('/g/' + gid) || path.startsWith('/e/') || path === '/people' || path.startsWith('/p/')) render();
@@ -576,7 +587,11 @@ function viewGroup(gid, tab = 'expenses') {
     const list = qtxt ? exps.filter((e) => e.desc.toLowerCase().includes(qtxt) || CAT_NAMES[e.category]?.toLowerCase().includes(qtxt)) : exps;
     let lastM = '';
     const news = whatsNew(gid);
-    body = `${news.length ? `<div class="card" style="margin-top:14px;padding:12px 14px"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><b class="small" style="font-weight:700">${icon('bell', 'sm')} What's new</b><button class="btn sm ghost" data-act="seenGroup" data-g="${gid}">Mark seen</button></div>${news.map((n) => `<a class="row" style="min-height:48px;padding:8px 0" href="${n.href}">${av(n.who, 'sm')}<div class="main"><div class="s" style="white-space:normal"><b style="color:var(--text)">${esc(S.firstName(n.who))}</b> ${esc(n.text)}</div></div><span class="faint small">${ago(n.at)}</span></a>`).join('')}</div>` : ''}
+    const L = st().groups[gid].live || {};
+    const claimNote = L.wants ? `<div class="note warn" style="margin-top:14px">${icon('user', 'sm')} Waiting for an admin to confirm this phone is ${esc(S.firstName(L.wants))}. Until then you can add new expenses but not change existing ones.</div>`
+      : L.rejected ? `<div class="note warn" style="margin-top:14px">${icon('user', 'sm')} An admin did not confirm this phone. You can add new expenses. Ask an admin, or rejoin from the link as yourself.</div>` : '';
+    const approvals = isAdmin(gid) && L.pending?.length ? `<div class="card" style="margin-top:14px;padding:12px 14px"><b class="small" style="font-weight:700">${icon('user', 'sm')} New phones asking to join as</b>${L.pending.map((p) => `<div class="row" style="cursor:default;min-height:52px;padding:8px 0">${av(p.wants, 'sm')}<div class="main"><div class="t">${esc(S.pname(p.wants, false))}</div><div class="s">${ago(p.at)} · only approve if it is really them</div></div><button class="btn sm primary" data-act="approveClaim" data-g="${gid}" data-id="${esc(p.id)}">Approve</button><button class="btn sm ghost" data-act="rejectClaim" data-g="${gid}" data-id="${esc(p.id)}">Reject</button></div>`).join('')}</div>` : '';
+    body = `${claimNote}${approvals}${news.length ? `<div class="card" style="margin-top:14px;padding:12px 14px"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><b class="small" style="font-weight:700">${icon('bell', 'sm')} What's new</b><button class="btn sm ghost" data-act="seenGroup" data-g="${gid}">Mark seen</button></div>${news.map((n) => `<a class="row" style="min-height:48px;padding:8px 0" href="${n.href}">${av(n.who, 'sm')}<div class="main"><div class="s" style="white-space:normal"><b style="color:var(--text)">${esc(S.firstName(n.who))}</b> ${esc(n.text)}</div></div><span class="faint small">${ago(n.at)}</span></a>`).join('')}</div>` : ''}
       ${quickBar(gid)}
       ${exps.length > 6 ? `<div class="quick" style="margin-top:10px">${icon('search', 'sm')}<input id="gs" placeholder="Search expenses" value="${esc(Q.get('s') || '')}" aria-label="Search expenses"></div>` : ''}
       ${list.length ? list.map((e) => { const d = new Date(e.date); const m = `${MON[d.getMonth()]} ${d.getFullYear()}`; const head = m !== lastM ? `${lastM ? '</div>' : ''}<div class="month">${m}</div><div class="list">` : ''; lastM = m; return head + expenseRow(e); }).join('') + '</div>'
@@ -602,14 +617,15 @@ function viewGroup(gid, tab = 'expenses') {
   } else {
     const ids = memberList(gid);
     const b = S.groupBalances(gid);
-    body = `<div class="list" style="margin-top:14px">${ids.map((id) => { const p = S.person(id); return `<a class="row" href="#/p/${id}">${av(id)}<div class="main"><div class="t">${esc(S.pname(id))}${id === me ? ' <span class="faint small">(you)</span>' : ''}</div><div class="s">${p.phone ? esc(p.phone) : 'no phone'}${p.upi ? ' · UPI ✓' : ''}</div></div><div class="end ${b[id] > 0 ? 'pos' : b[id] < 0 ? 'neg' : 'faint'}"><div class="v">${b[id] ? money(Math.abs(b[id])) : ''}</div></div></a>`; }).join('')}</div>
-      <form class="quick" id="addm" style="margin-top:14px"><input name="n" placeholder="Add people: Amit, Sneha" autocomplete="off" aria-label="Add people"><button class="mic" type="submit" aria-label="Add">${icon('plus')}</button></form>
+    body = `<div class="list" style="margin-top:14px">${ids.map((id) => { const p = S.person(id); return `<a class="row" href="#/p/${id}">${av(id)}<div class="main"><div class="t">${esc(S.pname(id))}${id === me ? ' <span class="faint small">(you)</span>' : ''}${isAdminPid(gid, id) ? ' <span class="tag a" style="font-size:11px;padding:2px 8px">Admin</span>' : ''}</div><div class="s">${p.phone ? esc(p.phone) : 'no phone'}${p.upi ? ' · UPI ✓' : ''}</div></div><div class="end ${b[id] > 0 ? 'pos' : b[id] < 0 ? 'neg' : 'faint'}"><div class="v">${b[id] ? money(Math.abs(b[id])) : ''}</div></div></a>`; }).join('')}</div>
+      ${st().groups[gid].live?.key && isAdmin(gid) ? `<div class="chips" style="margin-top:10px">${ids.filter((id) => id !== me).map((id) => `<button class="chip" data-act="managePerson" data-g="${gid}" data-id="${id}">${av(id)}${esc(S.firstName(id))} ${icon('more', 'sm')}</button>`).join('')}</div><p class="faint small" style="margin:6px 4px 0">Tap someone to make them admin or remove them.</p>` : ''}
+      ${isAdmin(gid) ? `<form class="quick" id="addm" style="margin-top:14px"><input name="n" placeholder="Add people: Amit, Sneha" autocomplete="off" aria-label="Add people"><button class="mic" type="submit" aria-label="Add">${icon('plus')}</button></form>
       <div class="chips" style="margin-top:10px">${peopleArr().filter((p) => !ids.includes(p.id)).slice(0, 12).map((p) => `<button class="chip new" data-act="addMember" data-g="${gid}" data-id="${p.id}">${av(p.id)}${esc(p.name)}</button>`).join('')}</div>
       ${hasContacts() ? `<button class="btn block" style="margin-top:10px" data-act="contactsToGroup" data-g="${gid}">${icon('phone', 'sm')} Add from contacts</button>` : ''}
       ${flag('liveGroups') && ids.length > 1 ? `<h2 class="h2">Invite to join</h2><p class="faint small" style="margin:-4px 4px 10px">They open the link, see every expense and can add their own. No sign-up.</p>
       <div class="chips">${ids.filter((id) => id !== me).map((id) => `<button class="chip" data-act="invitePerson" data-g="${gid}" data-id="${id}">${av(id)}${esc(S.firstName(id))} ${icon(S.person(id).phone ? 'whatsapp' : 'share', 'sm')}</button>`).join('')}</div>` : ''}
       <button class="btn block" style="margin-top:16px" data-act="inviteGroup" data-g="${gid}">${icon('link', 'sm')} ${flag('liveGroups') ? 'Share the group link' : 'Share a copy of this group'}</button>
-      <p class="faint small" style="margin:8px 4px">People do not need to join. Add names, track everything yourself, and share a summary or link when you want.</p>`;
+      <p class="faint small" style="margin:8px 4px">People do not need to join. Add names, track everything yourself, and share a summary or link when you want.</p>` : `<div class="note" style="margin-top:14px">${icon('user', 'sm')} You are a member. You can add expenses and edit your own. Admins (${(st().groups[gid].live?.admins || []).filter((p) => p !== st().me).map((p) => esc(S.firstName(p))).join(', ') || 'the creator'}) add or remove people and change older entries.</div>`}`;
   }
   return {
     tab: 'groups', title: g.name, back: '/groups',
@@ -822,7 +838,7 @@ function viewExpense(id) {
   const im = impactLine(e);
   return {
     tab: 'groups', title: settle ? 'Payment' : 'Expense', back: g ? '/g/' + g.id : '/',
-    actions: e.deleted ? '' : `<a class="icon-btn" href="#/e/${id}/edit" aria-label="Edit">${icon('edit')}</a>`,
+    actions: e.deleted || !canEditExp(e) ? '' : `<a class="icon-btn" href="#/e/${id}/edit" aria-label="Edit">${icon('edit')}</a>`,
     html: `${e.deleted ? `<div class="note warn" style="margin-top:8px">This expense was deleted. <button class="btn sm" data-act="restore" data-id="${id}">Restore</button></div>` : ''}
       <section class="hero" style="margin-top:8px">
         <div style="display:flex;gap:12px;align-items:center"><span class="cat ${settle ? 'settle' : ''}" style="width:52px;height:52px">${settle ? icon('swap') : catIcon(e.category)}</span><div style="min-width:0"><div style="font:700 20px var(--display)">${esc(e.desc)}</div><div class="muted small">${fmtDate(e.date)} · ${esc(g?.name || '')} · ${CAT_NAMES[e.category] || ''}</div></div></div>
@@ -843,7 +859,8 @@ function viewExpense(id) {
       ${e.text ? `<p class="faint small" style="margin:14px 4px">Added from: “${esc(e.text)}”</p>` : ''}
       ${e.deleted ? '' : `<div class="btns" style="margin-top:18px">
         ${settle || !flag('whatsapp') ? '' : `<button class="btn" data-act="notifyBill" data-id="${id}">${icon('whatsapp', 'sm')} Share bill</button>`}
-        <button class="btn danger" data-act="delExpense" data-id="${id}">${icon('trash', 'sm')} Delete</button></div>`}
+        ${canEditExp(e) ? `<button class="btn danger" data-act="delExpense" data-id="${id}">${icon('trash', 'sm')} Delete</button>` : ''}</div>
+      ${canEditExp(e) ? '' : `<p class="faint small" style="margin:10px 4px">${icon('user', 'sm')} Added by ${esc(S.pname(e.by))}. Only they or a group admin can edit or delete it.</p>`}`}
       <p class="faint small" style="margin:14px 4px">Added ${new Date(e.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}${e.updatedAt - e.createdAt > 2000 ? ' · edited ' + new Date(e.updatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}${e.imported ? ' · imported' : ''}</p>`,
     async mount(v) {
       const cf = $('#cmt', v);
@@ -950,7 +967,7 @@ function histEntries(gid) {
 }
 function histRow(h, onExpense) {
   const mine = h.by === st().me;
-  const canUndo = !mine && h.kind !== 'add' && st().expenses[h.eid];
+  const canUndo = !mine && h.kind !== 'add' && st().expenses[h.eid] && canEditExp(st().expenses[h.eid]);
   return `<div class="row hist ${h.d.flags.length ? 'flagged' : ''}" style="cursor:default;align-items:flex-start">${h.by ? av(h.by, 'sm') : `<span class="av sm">?</span>`}
     <div class="main"><div class="s" style="white-space:normal;color:var(--text)">${onExpense ? esc(h.d.text.replace(/^(\S+) changed [^:]+:/, '$1 changed')) : `<a href="#/e/${esc(h.eid)}">${esc(h.d.text)}</a>`}</div>
       <div class="s">${h.at ? ago(h.at) : ''}${h.dev ? ` · device ${esc(h.dev)}` : ''}${h.local ? ' · this phone' : ''}</div>
@@ -1072,6 +1089,7 @@ function applyParse() {
 function viewAdd(editId) {
   const editing = editId ? st().expenses[editId] : null;
   if (editId && !editing) return null;
+  if (editing && !canEditExp(editing)) { setTimeout(() => toast(ADMIN_ONLY), 50); history.replaceState(null, '', '#/e/' + editId); return viewExpense(editId); }
   const key = editId || 'new:' + (Q.get('g') || '') + (Q.get('q') || '') + (Q.get('scan') || '');
   if (!draft || draft.key !== key) {
     if (editing) {
@@ -1679,6 +1697,17 @@ async function flushPhotos() {
 }
 addEventListener('online', () => flushPhotos());
 
+async function claimOp(b, kind) {
+  const { g: gid, id } = b.dataset;
+  const g = st().groups[gid];
+  await busy(b, async () => {
+    g.live.pendingRoles = { ...(g.live.pendingRoles || {}), [kind]: [id] };
+    const r = await Sync.sync(gid, { push: 'force' });
+    toast(r.ok ? (kind === 'approve' ? 'Approved' : 'Rejected') : 'Could not reach the group. Try again.');
+    render();
+  });
+}
+
 // ---------- live groups ----------
 async function goLive(gid) {
   const g = st().groups[gid];
@@ -1906,6 +1935,14 @@ const ACT = {
   }),
   groupMenu: (b) => {
     const g = st().groups[b.dataset.g];
+    if (!isAdmin(g.id)) {
+      sheet(`<h3>${esc(g.name)}</h3><p class="muted small">${ADMIN_ONLY}: rename, trip settings, people and the invite link. Ask ${(g.live?.admins || []).filter((p) => p !== st().me).map((p) => esc(S.firstName(p))).join(' or ') || 'the creator'}.</p>
+        <div class="btns" style="margin-top:12px"><button class="btn" data-x="arch">${g.archived ? 'Unarchive' : 'Archive'}</button><button class="btn danger" data-x="del">${icon('trash', 'sm')} Remove from this phone</button></div>`, (el, close) => {
+        el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; S.save(); close(); go('/groups'); };
+        el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Remove ${g.name} from this phone?`, 'The group stays for everyone else. You can rejoin with the link.', 'Remove', () => { g.deleted = true; S.save(); go('/groups'); }); };
+      });
+      return;
+    }
     sheet(`<h3>${esc(g.name)}</h3>
       <form id="rn"><label class="field"><span>Name</span><input class="input" name="n" value="${esc(g.name)}" maxlength="50"></label><button class="btn block">Rename</button></form>
       <form id="trip" style="margin-top:16px"><h3 style="font-size:16px;margin:0 0 10px">Trip settings</h3>
@@ -1931,6 +1968,37 @@ const ACT = {
     });
   },
   print: () => print(),
+  approveClaim: (b) => claimOp(b, 'approve'),
+  rejectClaim: (b) => claimOp(b, 'reject'),
+  managePerson: (b) => {
+    const { g: gid, id } = b.dataset;
+    const g = st().groups[gid];
+    const adm = isAdminPid(gid, id);
+    const owes = pairwiseInGroup(gid, id);
+    const bal = S.groupBalances(gid)[id] || 0;
+    sheet(`<h3>${esc(S.pname(id))}</h3>
+      <button class="btn block" data-x="role">${icon('user', 'sm')} ${adm ? 'Remove admin rights' : 'Make group admin'}</button>
+      <p class="faint small" style="margin:6px 4px 12px">${adm ? 'They keep adding and editing their own entries.' : 'Admins can add or remove people, change settings and edit anyone\'s entries.'}</p>
+      <button class="btn danger block" data-x="rm">${icon('trash', 'sm')} Remove from group</button>
+      <p class="faint small" style="margin:6px 4px 0">${bal ? `They still ${bal > 0 ? 'get back' : 'owe'} ${money(Math.abs(bal))}. Settle first, or their past entries stay in the totals.` : 'Their past entries stay in history.'}</p>`, (el, close) => {
+      el.querySelector('[data-x=role]').onclick = (e) => busy(e.currentTarget, async () => {
+        g.live.pendingRoles = { admins: { [Sync.remoteId(gid, id)]: !adm } };
+        const r = await Sync.sync(gid, { push: 'force' });
+        close(); render();
+        toast(r.ok ? (adm ? 'Admin rights removed' : `${S.firstName(id)} is now an admin`) : 'Could not reach the group. Try again.');
+      });
+      el.querySelector('[data-x=rm]').onclick = () => {
+        close();
+        confirmSheet(`Remove ${S.pname(id)}?`, bal ? `They still ${bal > 0 ? 'get back' : 'owe'} ${money(Math.abs(bal))} in this group.` : 'They will no longer show in this group.', 'Remove', () => {
+          g.removed = [...new Set([...(g.removed || []), id])];
+          g.metaAt = Math.max(Date.now(), (g.metaAt || 0) + 1);
+          if (g.live?.admins?.includes(id)) g.live.pendingRoles = { admins: { [Sync.remoteId(gid, id)]: false } };
+          S.save(); render(); toast(`${S.firstName(id)} removed`);
+        });
+      };
+      void owes;
+    });
+  },
   clearSearches: () => { st().settings.recentSearches = []; S.save(); render(); },
   undoHist: (b) => {
     const e = st().expenses[b.dataset.eid];
