@@ -33,6 +33,10 @@ const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 export function guard(stored, inc, who) {
   if (!stored || !inc || who?.admin) return { inc, denied: [] };
   const pid = who?.pid;
+  // Someone an admin removed from the group can still read it with the link, but not change it.
+  if (pid && (stored.meta?.removed || []).includes(pid)) {
+    return { inc: { ...stored, expenses: {}, comments: {} }, denied: Object.keys(inc.expenses || {}).filter((id) => !stored.expenses?.[id] || JSON.stringify(inc.expenses[id]) !== JSON.stringify(stored.expenses[id])) };
+  }
   const out = { ...inc, expenses: {}, comments: {}, people: { ...inc.people } };
   const denied = [];
   // Group-level settings are admin-only.

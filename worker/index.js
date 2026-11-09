@@ -15,7 +15,7 @@ const cors = (origin) => ({
   'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
 });
-const BUILD = 'roles-seats-2';
+const BUILD = 'roles-removed-3';
 const json = (data, status, origin) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Hisaab-Build': BUILD, ...cors(origin) } });
 
 async function sha256(s) {

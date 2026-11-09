@@ -557,3 +557,12 @@ t('roles: promoting someone who has not joined yet sticks, and their phone becom
   assert.deepEqual(adminPids(acc), ['namit']);
   assert.equal(applyRoleOps(acc, { admins: { namit: false } }, A).devA.admin, true); // never zero admin phones
 });
+
+t('roles: a removed person cannot add or change anything', () => {
+  const stored = { name: 'Trip', nameAt: 1, members: ['namit', 'deepak'], people: { namit: { name: 'Namit' }, deepak: { name: 'Deepak' } }, meta: { removed: ['deepak'], at: 2 },
+    expenses: { e1: { id: 'e1', by: 'deepak', amount: 100, paid: { deepak: 100 }, owed: { deepak: 100 }, updatedAt: 1 } }, comments: {} };
+  const inc = { ...stored, expenses: { ...stored.expenses, e1: { ...stored.expenses.e1, amount: 1, updatedAt: 5 }, e9: { id: 'e9', by: 'deepak', amount: 5, paid: { deepak: 5 }, owed: { namit: 5 }, updatedAt: 5 } } };
+  const r = guard(stored, inc, { pid: 'deepak', admin: false });
+  assert.deepEqual(r.denied.sort(), ['e1', 'e9']);
+  assert.deepEqual(r.inc.expenses, {});
+});
