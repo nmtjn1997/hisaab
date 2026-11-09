@@ -543,3 +543,17 @@ t('roles: creator is admin, members add and edit only their own', () => {
   assert.equal(ok.devC.pid, 'namit');
   assert.equal(applyRoleOps(late, { approve: ['devC'] }, B).devC.pid, null); // members cannot approve
 });
+
+t('roles: promoting someone who has not joined yet sticks, and their phone becomes admin', () => {
+  let acc = admit(null, 'devA', 'namit', true);
+  const A = { pid: 'namit', admin: true };
+  acc = applyRoleOps(acc, { admins: { jeeju: true } }, A);
+  assert.deepEqual(adminPids(acc).sort(), ['jeeju', 'namit']);   // badge shows right away
+  acc = admit(acc, 'devJ', 'jeeju', false);
+  assert.equal(acc.devJ.admin, true);                              // their phone joins as admin
+  assert.equal(acc.devJ.pid, 'jeeju');                             // the seat does not block the claim
+  acc = applyRoleOps(acc, { admins: { jeeju: false } }, A);
+  assert.equal(acc.devJ.admin, false);
+  assert.deepEqual(adminPids(acc), ['namit']);
+  assert.equal(applyRoleOps(acc, { admins: { namit: false } }, A).devA.admin, true); // never zero admin phones
+});

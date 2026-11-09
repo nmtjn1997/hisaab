@@ -617,8 +617,8 @@ function viewGroup(gid, tab = 'expenses') {
   } else {
     const ids = memberList(gid);
     const b = S.groupBalances(gid);
-    body = `<div class="list" style="margin-top:14px">${ids.map((id) => { const p = S.person(id); return `<a class="row" href="#/p/${id}">${av(id)}<div class="main"><div class="t">${esc(S.pname(id))}${id === me ? ' <span class="faint small">(you)</span>' : ''}${isAdminPid(gid, id) ? ' <span class="tag a" style="font-size:11px;padding:2px 8px">Admin</span>' : ''}</div><div class="s">${p.phone ? esc(p.phone) : 'no phone'}${p.upi ? ' · UPI ✓' : ''}</div></div><div class="end ${b[id] > 0 ? 'pos' : b[id] < 0 ? 'neg' : 'faint'}"><div class="v">${b[id] ? money(Math.abs(b[id])) : ''}</div></div></a>`; }).join('')}</div>
-      ${st().groups[gid].live?.key && isAdmin(gid) ? `<div class="chips" style="margin-top:10px">${ids.filter((id) => id !== me).map((id) => `<button class="chip" data-act="managePerson" data-g="${gid}" data-id="${id}">${av(id)}${esc(S.firstName(id))} ${icon('more', 'sm')}</button>`).join('')}</div><p class="faint small" style="margin:6px 4px 0">Tap someone to make them admin or remove them.</p>` : ''}
+    const manage = !!st().groups[gid].live?.key && isAdmin(gid);
+    body = `<div class="list" style="margin-top:14px">${ids.map((id) => { const p = S.person(id); return `<div class="prow"><a class="row" href="#/p/${id}">${av(id)}<div class="main"><div class="t">${esc(S.pname(id))}${id === me ? ' <span class="faint small">(you)</span>' : ''}${isAdminPid(gid, id) ? ' <span class="tag a" style="font-size:11px;padding:2px 8px">Admin</span>' : ''}</div><div class="s">${p.phone ? esc(p.phone) : 'no phone'}${p.upi ? ' · UPI ✓' : ''}</div></div><div class="end ${b[id] > 0 ? 'pos' : b[id] < 0 ? 'neg' : 'faint'}"><div class="v">${b[id] ? money(Math.abs(b[id])) : ''}</div></div></a>${manage && id !== me ? `<button class="icon-btn" data-act="managePerson" data-g="${gid}" data-id="${id}" aria-label="Options for ${esc(S.firstName(id))}">${icon('more')}</button>` : ''}</div>`; }).join('')}</div>
       ${isAdmin(gid) ? `<form class="quick" id="addm" style="margin-top:14px"><input name="n" placeholder="Add people: Amit, Sneha" autocomplete="off" aria-label="Add people"><button class="mic" type="submit" aria-label="Add">${icon('plus')}</button></form>
       <div class="chips" style="margin-top:10px">${peopleArr().filter((p) => !ids.includes(p.id)).slice(0, 12).map((p) => `<button class="chip new" data-act="addMember" data-g="${gid}" data-id="${p.id}">${av(p.id)}${esc(p.name)}</button>`).join('')}</div>
       ${hasContacts() ? `<button class="btn block" style="margin-top:10px" data-act="contactsToGroup" data-g="${gid}">${icon('phone', 'sm')} Add from contacts</button>` : ''}
@@ -1985,7 +1985,8 @@ const ACT = {
         g.live.pendingRoles = { admins: { [Sync.remoteId(gid, id)]: !adm } };
         const r = await Sync.sync(gid, { push: 'force' });
         close(); render();
-        toast(r.ok ? (adm ? 'Admin rights removed' : `${S.firstName(id)} is now an admin`) : 'Could not reach the group. Try again.');
+        const now = isAdminPid(gid, id);
+        toast(!r.ok ? 'Could not reach the group. Try again.' : now === !adm ? (adm ? 'Admin rights removed' : `${S.firstName(id)} is now an admin`) : 'The group did not accept that change. Try again.');
       });
       el.querySelector('[data-x=rm]').onclick = () => {
         close();

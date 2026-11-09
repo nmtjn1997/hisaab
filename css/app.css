@@ -417,3 +417,7 @@ main:focus { outline: none; }
 }
 .nudge { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: linear-gradient(135deg, var(--accent-soft), transparent 60%), var(--surface); }
 .nudge .row + .row { border-top: 1px solid var(--line); }
+.prow { display: flex; align-items: center; }
+.prow + .prow { border-top: 1px solid var(--line); }
+.prow > .row { flex: 1; min-width: 0; }
+.prow > .icon-btn { margin-right: 6px; color: var(--muted); }
