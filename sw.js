@@ -1,5 +1,5 @@
 // Offline: stale-while-revalidate for the app shell and fonts. Bump VERSION on every deploy.
-const VERSION = 'h-2611092207';
+const VERSION = 'h-2611092210';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/money.js', 'js/parse.js', 'js/store.js', 'js/share.js', 'js/receipt.js', 'js/icons.js', 'js/sync.js', 'js/merge.js', 'js/flags.js', 'js/repeat.js', 'js/fx.js', 'js/card.js', 'js/telemetry.js', 'js/history.js', 'js/search.js', 'js/access.js', 'js/push.js', 'js/push-key.js', 'js/webpush.js', 'flags.json', 'manifest.webmanifest', 'assets/icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -16,7 +16,7 @@ self.addEventListener('push', (e) => {
     let items = [];
     try { items = (await (await fetch(PUSH, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub?.endpoint }) })).json()).items || []; } catch {}
     if (!items.length) items = [{ tag: 'hisaab', title: 'Hisaab', body: 'Something changed in your groups.', url: '#/' }];
-    await Promise.all(items.map((m) => self.registration.showNotification(m.title || 'Hisaab', { body: m.body || '', tag: m.tag || 'hisaab', renotify: true, icon: 'assets/icon.svg', badge: 'assets/icon.svg', data: { url: m.url || '#/' } })));
+    await Promise.all(items.map((m) => self.registration.showNotification(m.title || 'Hisaab', { body: m.body || '', tag: m.tag || 'hisaab', renotify: true, icon: 'assets/icon-192.png', data: { url: m.url || '#/' } })));
   })());
 });
 self.addEventListener('notificationclick', (e) => {
@@ -24,7 +24,8 @@ self.addEventListener('notificationclick', (e) => {
   const url = new URL(self.registration.scope + (e.notification.data?.url || '#/')).href;
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
     const c = cs.find((x) => x.url.startsWith(self.registration.scope));
-    return c ? c.navigate(url).then((w) => (w || c).focus()) : self.clients.openWindow(url);
+    // navigate() rejects for a tab this worker does not control, so fall back to opening one.
+    return c ? c.focus().then(() => c.navigate(url)).catch(() => self.clients.openWindow(url)) : self.clients.openWindow(url);
   }));
 });
 self.addEventListener('fetch', (e) => {
