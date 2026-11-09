@@ -2043,7 +2043,7 @@ const ACT = {
   loadSample: () => go('/g/' + seedSample()),
   install: async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); },
   export: () => {
-    const blob = new Blob([JSON.stringify({ ...st(), exportedAt: Date.now() }, null, 1)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ ...st(), settings: { ...st().settings, push: undefined, pushAt: undefined }, exportedAt: Date.now() }, null, 1)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `hisaab-backup-${isoDate(Date.now())}.json`;

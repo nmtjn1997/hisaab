@@ -36,7 +36,8 @@ export const onChange = (f) => listeners.add(f);
 addEventListener('storage', (e) => { if (e.key === KEY) { state = load(); listeners.forEach((f) => f('external')); } });
 addEventListener('pagehide', flush);
 
-export function replaceState(s) { state = { ...empty(), ...s, settings: { ...empty().settings, ...(s.settings || {}) } }; flush(); listeners.forEach((f) => f()); }
+// Push settings belong to this phone, never to a backup made on another one.
+export function replaceState(s) { const { push, pushAt } = state.settings || {}; state = { ...empty(), ...s, settings: { ...empty().settings, ...(s.settings || {}), push, pushAt } }; flush(); listeners.forEach((f) => f()); }
 
 // ---------- people ----------
 export function addPerson(name, extra = {}) {

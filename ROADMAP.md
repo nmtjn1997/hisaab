@@ -9,6 +9,8 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Done
 
+- 2026-11-09 Restoring a backup keeps this phone's own notification subscription (it used to bring the old phone's, so live-group pings went to the wrong device), and backups no longer include it.
+
 - 2026-11-09 Android notifications: PNG icon instead of SVG (Chrome cannot draw SVG there), no colour badge (showed as a blank square), and tapping a notification opens the app even when the open tab is not controlled by the service worker.
 
 - 2026-11-09: Push notifications. Live-group pings when someone adds or changes an entry, plus a weekly Sunday 10:00 "time to nudge". Pushes carry no content; the phone fetches the text from our server. VAPID signed in the Worker, dead subscriptions cleaned up on 404/410. iPhone needs the home-screen app.

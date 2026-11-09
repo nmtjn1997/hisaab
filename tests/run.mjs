@@ -603,3 +603,15 @@ t('push: weekly nudge lands on the next Sunday 10:00 local', () => {
   assert.equal(at('2026-11-08T10:00:00').toString(), new Date('2026-11-15T10:00:00').toString()); // Sunday at 10: next week
   assert.equal(at('2026-11-11T18:30:00').toString(), new Date('2026-11-15T10:00:00').toString()); // Wednesday
 });
+
+const mem = new Map();
+globalThis.localStorage ||= { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+globalThis.addEventListener ||= () => {};
+const Store = await import('../js/store.js');
+t('restore: a backup never brings another phone\'s push subscription', () => {
+  Store.state.settings.push = 'https://fcm.googleapis.com/fcm/send/THIS-PHONE';
+  Store.replaceState({ v: 1, people: {}, groups: {}, expenses: {}, settings: { theme: 'light', push: 'https://fcm.googleapis.com/fcm/send/OLD-PHONE', pushAt: 1 } });
+  assert.equal(Store.state.settings.push, 'https://fcm.googleapis.com/fcm/send/THIS-PHONE');
+  assert.equal(Store.state.settings.theme, 'light');
+  assert.equal(Store.state.settings.pushAt, undefined);
+});
