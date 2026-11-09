@@ -4,11 +4,12 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
 - Google Sheets export (needs Google sign-in).
-- Push notifications for reminders while the app is closed (needs Web Push via the Worker; iPhone only for home-screen installs).
 - End-to-end encryption for live groups (needs a decision: the server could no longer write tamper-proof edit history, since it cannot read changes; would move to signed client-side history).
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
 
 ## Done
+
+- 2026-11-09: Push notifications. Live-group pings when someone adds or changes an entry, plus a weekly Sunday 10:00 "time to nudge". Pushes carry no content; the phone fetches the text from our server. VAPID signed in the Worker, dead subscriptions cleaned up on 404/410. iPhone needs the home-screen app.
 - 2026-11-09 Every group (not just live ones) has the per-person menu: remove from group, edit name/phone/UPI; admin options only in live groups.
 - 2026-11-09 Removed people can still view a live group with the link but the server refuses their adds and edits; their phone says so.
 - 2026-11-09 People list: one row per person with an inline menu (make admin, remove admin, remove from group). Admin rights belong to the person, so promoting someone who has not joined on a phone yet sticks and their phone becomes admin when it joins; the success message only shows when the group accepted it.
