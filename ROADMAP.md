@@ -9,6 +9,7 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 - Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
 
 ## Done
+- 2026-11-09 Every group (not just live ones) has the per-person menu: remove from group, edit name/phone/UPI; admin options only in live groups.
 - 2026-11-09 Removed people can still view a live group with the link but the server refuses their adds and edits; their phone says so.
 - 2026-11-09 People list: one row per person with an inline menu (make admin, remove admin, remove from group). Admin rights belong to the person, so promoting someone who has not joined on a phone yet sticks and their phone becomes admin when it joins; the success message only shows when the group accepted it.
 - 2026-11-09 Group roles (enforced by the sync server): creator's phone is admin; admins add or remove people, rename, change trip settings and the link, edit or delete anyone's entry, and make other admins; members add entries and edit their own; refused changes are undone on the phone with a message. A phone claiming a name already in use waits for an admin to approve it (server code stored; waiting on Cloudflare to start serving it). Roles scenario added to the multi-phone simulator.

@@ -618,7 +618,7 @@ function viewGroup(gid, tab = 'expenses') {
   } else {
     const ids = memberList(gid);
     const b = S.groupBalances(gid);
-    const manage = !!st().groups[gid].live?.key && isAdmin(gid);
+    const manage = isAdmin(gid); // local groups: you manage everyone; live groups: admins only
     body = `<div class="list" style="margin-top:14px">${ids.map((id) => { const p = S.person(id); return `<div class="prow"><a class="row" href="#/p/${id}">${av(id)}<div class="main"><div class="t">${esc(S.pname(id))}${id === me ? ' <span class="faint small">(you)</span>' : ''}${isAdminPid(gid, id) ? ' <span class="tag a" style="font-size:11px;padding:2px 8px">Admin</span>' : ''}</div><div class="s">${p.phone ? esc(p.phone) : 'no phone'}${p.upi ? ' · UPI ✓' : ''}</div></div><div class="end ${b[id] > 0 ? 'pos' : b[id] < 0 ? 'neg' : 'faint'}"><div class="v">${b[id] ? money(Math.abs(b[id])) : ''}</div></div></a>${manage && id !== me ? `<button class="icon-btn" data-act="managePerson" data-g="${gid}" data-id="${id}" aria-label="Options for ${esc(S.firstName(id))}">${icon('more')}</button>` : ''}</div>`; }).join('')}</div>
       ${isAdmin(gid) ? `<form class="quick" id="addm" style="margin-top:14px"><input name="n" placeholder="Add people: Amit, Sneha" autocomplete="off" aria-label="Add people"><button class="mic" type="submit" aria-label="Add">${icon('plus')}</button></form>
       <div class="chips" style="margin-top:10px">${peopleArr().filter((p) => !ids.includes(p.id)).slice(0, 12).map((p) => `<button class="chip new" data-act="addMember" data-g="${gid}" data-id="${p.id}">${av(p.id)}${esc(p.name)}</button>`).join('')}</div>
@@ -1978,17 +1978,17 @@ const ACT = {
     const owes = pairwiseInGroup(gid, id);
     const bal = S.groupBalances(gid)[id] || 0;
     sheet(`<h3>${esc(S.pname(id))}</h3>
-      <button class="btn block" data-x="role">${icon('user', 'sm')} ${adm ? 'Remove admin rights' : 'Make group admin'}</button>
-      <p class="faint small" style="margin:6px 4px 12px">${adm ? 'They keep adding and editing their own entries.' : 'Admins can add or remove people, change settings and edit anyone\'s entries.'}</p>
+      ${g.live?.key ? `<button class="btn block" data-x="role">${icon('user', 'sm')} ${adm ? 'Remove admin rights' : 'Make group admin'}</button>
+      <p class="faint small" style="margin:6px 4px 12px">${adm ? 'They keep adding and editing their own entries.' : 'Admins can add or remove people, change settings and edit anyone\'s entries.'}</p>` : `<a class="btn block" href="#/p/${id}" style="margin-bottom:12px">${icon('edit', 'sm')} Edit name, phone, UPI</a>`}
       <button class="btn danger block" data-x="rm">${icon('trash', 'sm')} Remove from group</button>
       <p class="faint small" style="margin:6px 4px 0">${bal ? `They still ${bal > 0 ? 'get back' : 'owe'} ${money(Math.abs(bal))}. Settle first, or their past entries stay in the totals.` : 'Their past entries stay in history.'}</p>`, (el, close) => {
-      el.querySelector('[data-x=role]').onclick = (e) => busy(e.currentTarget, async () => {
+      el.querySelector('[data-x=role]')?.addEventListener('click', (e) => busy(e.currentTarget, async () => {
         g.live.pendingRoles = { admins: { [Sync.remoteId(gid, id)]: !adm } };
         const r = await Sync.sync(gid, { push: 'force' });
         close(); render();
         const now = isAdminPid(gid, id);
         toast(!r.ok ? 'Could not reach the group. Try again.' : now === !adm ? (adm ? 'Admin rights removed' : `${S.firstName(id)} is now an admin`) : 'The group did not accept that change. Try again.');
-      });
+      }));
       el.querySelector('[data-x=rm]').onclick = () => {
         close();
         confirmSheet(`Remove ${S.pname(id)}?`, bal ? `They still ${bal > 0 ? 'get back' : 'owe'} ${money(Math.abs(bal))} in this group.` : 'They will no longer show in this group.', 'Remove', () => {
