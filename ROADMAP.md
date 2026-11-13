@@ -3,10 +3,11 @@
 Worked top to bottom. Each shipped item moves to Done with the date.
 
 ## Next
-- Google Sheets export (needs Google sign-in).
 - End-to-end encryption for live groups (needs a decision: the server could no longer write tamper-proof edit history, since it cannot read changes; would move to signed client-side history).
 
 ## Done
+
+- 2026-11-13 Google Sheets export. Share a group and pick Google Sheets: it makes a new sheet in your own Drive with the expense table, per-person columns, totals and who pays whom, amounts as real numbers so they add up. No Hisaab account needed; Google only ever grants access to the sheets Hisaab itself created.
 
 - 2026-11-13 Optional Google sign-in. Signed out, nothing changes and nothing leaves the phone. Signed in, every group is kept in your Google account and merges onto any other phone you sign in on, newer edit winning. Google's script loads only when you tap the button; the server stores a hash of the Google id, not the email.
 
