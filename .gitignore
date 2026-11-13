@@ -5,3 +5,4 @@ node_modules/
 worker/.wrangler/
 .worker-sum
 .vapid.json
+worker/.dev.vars

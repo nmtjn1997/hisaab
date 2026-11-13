@@ -5,9 +5,10 @@ Worked top to bottom. Each shipped item moves to Done with the date.
 ## Next
 - Google Sheets export (needs Google sign-in).
 - End-to-end encryption for live groups (needs a decision: the server could no longer write tamper-proof edit history, since it cannot read changes; would move to signed client-side history).
-- Google sign-in (needs an OAuth client ID from Google Cloud): same account restores groups on a new phone.
 
 ## Done
+
+- 2026-11-13 Optional Google sign-in. Signed out, nothing changes and nothing leaves the phone. Signed in, every group is kept in your Google account and merges onto any other phone you sign in on, newer edit winning. Google's script loads only when you tap the button; the server stores a hash of the Google id, not the email.
 
 - 2026-11-09 Notifications stop when they should: removing a live group from this phone tells the server to stop pinging it, and "Erase everything" turns notifications off first (an erased phone used to keep getting pings and the weekly nudge).
 
