@@ -1776,6 +1776,7 @@ async function exportSheet(gid) {
   const g = st().groups[gid];
   const cur = ISO[gcur(gid)] || gcur(gid).trim();
   try {
+    track('sheets_start');
     const { loadGis, authorize, createSheet, spreadsheetBody } = await import('./sheets.js');
     await loadGis();
     const tok = await authorize();          // the Google permission window
@@ -1789,9 +1790,11 @@ async function exportSheet(gid) {
     const w = open(url, '_blank', 'noopener');
     if (!w) toast('Sheet created', { action: 'Open', onAction: () => open(url, '_blank', 'noopener'), ms: 15000 });
   } catch (e) {
-    if (/cancelled|popup_closed|access_denied/i.test(e.message)) return;
-    if (/popup_failed/i.test(e.message)) return toast('Your browser blocked the Google window. Allow pop-ups for Hisaab, then try again.');
-    toast(e.message === 'permission' ? 'Google did not allow that. Try again.' : 'Could not make the sheet. The CSV export always works.');
+    const why = /popup_failed/i.test(e.message) ? 'sheets_popup' : /cancelled|popup_closed|access_denied/i.test(e.message) ? 'sheets_cancel' : e.message === 'permission' ? 'sheets_denied' : 'sheets_failed';
+    track(why);
+    if (why === 'sheets_cancel') return;
+    if (why === 'sheets_popup') return toast('Your browser blocked the Google window. Allow pop-ups for Hisaab, then try again.');
+    toast(why === 'sheets_denied' ? 'Google did not allow that. Try again.' : 'Could not make the sheet. The CSV export always works.');
   }
 }
 

@@ -18,6 +18,8 @@ node tests/run.mjs
 for f in js/*.js; do node --check "$f"; done
 v=$(date +%y%m%d%H%M)
 sed -i '' "s/^const VERSION = '.*';/const VERSION = 'h-$v';/" sw.js
+# The build a device reports in its stats is the same one the service worker caches.
+sed -i '' "s/^const VERSION = '.*';/const VERSION = 'h-$v';/" js/telemetry.js
 git add -A
 git commit -q --no-verify -m "${1:-Update}" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" || true
 GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p') git push -q origin main || echo "GitHub push failed (network); it goes out with the next deploy"

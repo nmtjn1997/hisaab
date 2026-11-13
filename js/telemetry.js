@@ -1,7 +1,7 @@
 // Anonymous usage stats: a random install id, screen names with ids stripped, feature counts
 // and crash messages. Never names, amounts, notes, bill text or group keys.
 const BASE = 'https://hisaab-sync.backinstock.workers.dev';
-const VERSION = '2026.11.06';
+const VERSION = 'h-2611131748';
 let queue = [], timer = null, enabledFn = () => true;
 
 function uid() {
