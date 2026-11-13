@@ -628,3 +628,43 @@ t('push: a live group removed from this phone tells the server to stop pinging i
   await SyncM.sync('lg', { push: false });
   assert.deepEqual(sent.map((b) => b.push), ['https://fcm.googleapis.com/fcm/send/P', '']);
 });
+
+import { verifyGoogleToken, makeSession, readSession } from '../js/auth.js';
+import { mergeState, backupPayload } from '../js/backup.js';
+{
+  // A Google-style RS256 token signed with a throwaway key.
+  const kp = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+  const pub = { ...(await crypto.subtle.exportKey('jwk', kp.publicKey)), kid: 'k1' };
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const sign = async (claims, kid = 'k1') => { const h = enc({ alg: 'RS256', kid }), p = enc(claims); return `${h}.${p}.${Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', kp.privateKey, new TextEncoder().encode(`${h}.${p}`))).toString('base64url')}`; };
+  const CID = 'abc.apps.googleusercontent.com';
+  const good = { aud: CID, iss: 'https://accounts.google.com', sub: '1234', email: 'a@b.c', name: 'Asha', exp: Math.floor(Date.now() / 1000) + 600 };
+  const ok = await verifyGoogleToken(await sign(good), CID, [pub]);
+  const bad = async (claims, kid) => verifyGoogleToken(await sign(claims, kid), CID, [pub]).then(() => 'accepted', (e) => e.message);
+  const tampered = (await sign(good)).replace(/\.[^.]+\./, '.' + enc({ ...good, sub: '999' }) + '.');
+  const results = [ok.sub, await bad({ ...good, aud: 'someone-else' }), await bad({ ...good, iss: 'evil.com' }), await bad({ ...good, exp: 1 }), await bad(good, 'k9'), await verifyGoogleToken(tampered, CID, [pub]).then(() => 'accepted', (e) => e.message)];
+  const s = await makeSession('0123456789abcdef0123456789abcdef', 'secret');
+  const sess = [await readSession(s, 'secret'), await readSession(s, 'other'), await readSession(s.slice(0, -2) + 'xx', 'secret'), await readSession(await makeSession('0123456789abcdef0123456789abcdef', 'secret', -1), 'secret')];
+  t('google sign-in: only a valid, unexpired token for our client id is accepted; sessions cannot be forged', () => {
+    assert.deepEqual(results, ['1234', 'wrong audience', 'wrong issuer', 'expired', 'unknown key', 'bad signature']);
+    assert.deepEqual(sess, ['0123456789abcdef0123456789abcdef', null, null, null]);
+  });
+}
+t('account backup: merging two phones keeps everything, newer edit wins, settings stay per phone', () => {
+  const A = { v: 1, me: 'me1', people: { me1: { id: 'me1', name: 'Namit', createdAt: 1 } }, groups: { g1: { id: 'g1', name: 'Goa', members: ['me1'], createdAt: 1, live: { key: 'K', map: {}, sig: 'x', histSeq: 9 } } }, expenses: { e1: { id: 'e1', amount: 100, updatedAt: 5 }, e2: { id: 'e2', amount: 200, updatedAt: 9 } }, comments: {}, history: {}, settings: { theme: 'dark', push: 'P' } };
+  const B = { v: 1, me: 'me1', people: { me1: { id: 'me1', name: 'Namit', createdAt: 1 } }, groups: { g1: { id: 'g1', name: 'Goa trip', nameAt: 7, members: ['me1'], createdAt: 1, live: { key: 'K', map: {}, sig: 'y', histSeq: 2 } }, g2: { id: 'g2', name: 'Flat', createdAt: 3, members: ['me1'] } }, expenses: { e1: { id: 'e1', amount: 150, updatedAt: 8 }, e2: { id: 'e2', amount: 999, updatedAt: 3 }, e3: { id: 'e3', amount: 1, updatedAt: 1 } } };
+  const m = mergeState(A, B);
+  assert.deepEqual(Object.keys(m.expenses).sort(), ['e1', 'e2', 'e3']);
+  assert.equal(m.expenses.e1.amount, 150);       // other phone's later edit
+  assert.equal(m.expenses.e2.amount, 200);       // this phone's later edit
+  assert.equal(m.groups.g1.name, 'Goa trip');     // renamed elsewhere
+  assert.equal(m.groups.g1.live.histSeq, 9);      // this phone keeps its own sync position
+  assert.ok(m.groups.g2);
+  assert.equal(m.settings.push, 'P');
+  assert.equal(backupPayload(A).settings, undefined);
+  // A fresh phone that typed its own name takes the account's identity.
+  const fresh = { v: 1, me: 'new', people: { new: { id: 'new', name: 'Namit', createdAt: 99 } }, groups: {}, expenses: {}, settings: {} };
+  const f = mergeState(fresh, B);
+  assert.equal(f.me, 'me1');
+  assert.equal(f.people.new, undefined);
+});

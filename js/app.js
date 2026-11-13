@@ -4,6 +4,7 @@ import { parseExpense, findPeople, assignItems, CATEGORIES, renameInText, parseR
 import { icon, catIcon } from './icons.js';
 import * as Sync from './sync.js';
 import * as Push from './push.js';
+import * as Acc from './account.js';
 import * as FX from './fx.js';
 import { searchAll, highlight } from './search.js';
 import { describe as describeHist, revertPatch, FLAG_TEXT } from './history.js';
@@ -1605,7 +1606,12 @@ function viewSettings() {
       <h2 class="h2">Notifications</h2>
       ${(() => { const ps = Push.status(); return `<div class="list"><div class="row" style="cursor:default"><div class="main"><div class="t">Reminders and live updates</div><div class="s" style="white-space:normal">${esc(PUSH_NOTE[ps])}</div></div>${ps === 'on' || ps === 'off' ? `<button class="check" role="switch" id="pushsw" aria-checked="${ps === 'on'}" aria-label="Notifications">${icon('check')}</button>` : ''}</div></div>`; })()}
       <h2 class="h2">Your data</h2>
-      <div class="note" style="margin-bottom:10px">Everything stays on this device (${(bytes / 1024).toFixed(0)} KB). Export a backup now and then, or before changing phones.</div>
+      ${Acc.signedIn()
+        ? `<div class="list"><div class="row" style="cursor:default"><div class="main"><div class="t">Backed up to Google</div><div class="s" style="white-space:normal">${esc(s.account.email || s.account.name || 'Signed in')} · ${s.account.at ? 'saved ' + ago(s.account.at) : 'saving'}. Sign in on another phone to see the same groups.</div></div></div></div>
+           <div class="btns" style="margin-top:10px"><button class="btn" data-act="backupNow">${icon('upload', 'sm')} Back up now</button><button class="btn ghost" data-act="signOut">Sign out</button></div>`
+        : `<div class="note" style="margin-bottom:10px">Everything stays on this device (${(bytes / 1024).toFixed(0)} KB). Sign in to keep a copy in your Google account, or export a file instead. Both are optional.</div>
+           <div id="gbtn" style="display:flex;justify-content:center;margin-bottom:12px"></div>
+           <p class="faint small" style="text-align:center;margin:-4px 4px 12px">Only your name and email. Hisaab works the same signed out.</p>`}
       <div class="btns"><button class="btn" data-act="export">${icon('download', 'sm')} Export backup</button><label class="btn">${icon('upload', 'sm')} Restore<input type="file" accept="application/json,.json" id="restore" hidden></label></div>
       <label class="btn block" style="margin-top:10px" ${flag('splitwiseImport') ? '' : 'hidden'}>${icon('upload', 'sm')} Import from Splitwise (CSV)<input type="file" accept=".csv,text/csv" id="swcsv" hidden></label>
       <p class="faint small" style="margin:6px 4px">In Splitwise: open a group → settings → Export as spreadsheet.</p>
@@ -1621,6 +1627,9 @@ function viewSettings() {
       $$('[data-flag]', v).forEach((b) => (b.onclick = () => { s.flags = { ...(s.flags || {}), [b.dataset.flag]: !flag(b.dataset.flag) }; S.save(); buzz(); render(); }));
       $$('[data-theme-set]', v).forEach((b) => (b.onclick = (e) => { const r = b.getBoundingClientRect(); document.documentElement.style.setProperty('--tx', `${e.clientX || r.left + r.width / 2}px`); document.documentElement.style.setProperty('--ty', `${e.clientY || r.top}px`); s.theme = b.dataset.themeSet; S.save(); FX.transition(() => { applyTheme(); render(); }, 'theme'); }));
       $('#cur', v).onchange = (e) => { s.cur = e.target.value; S.save(); };
+      const gb = $('#gbtn', v);
+      if (gb) Acc.renderButton(gb, (err) => { if (err) { toast('Could not sign in. Try again.'); return; } toast('Signed in. Your groups are backed up.'); track('signin'); render(); })
+        .catch(() => { gb.outerHTML = '<p class="faint small" style="text-align:center">Google sign-in could not load. Export a backup file instead.</p>'; });
       const psw = $('#pushsw', v);
       if (psw) psw.onclick = async () => {
         psw.disabled = true;
@@ -1961,8 +1970,8 @@ const ACT = {
     if (!isAdmin(g.id)) {
       sheet(`<h3>${esc(g.name)}</h3><p class="muted small">${ADMIN_ONLY}: rename, trip settings, people and the invite link. Ask ${(g.live?.admins || []).filter((p) => p !== st().me).map((p) => esc(S.firstName(p))).join(' or ') || 'the creator'}.</p>
         <div class="btns" style="margin-top:12px"><button class="btn" data-x="arch">${g.archived ? 'Unarchive' : 'Archive'}</button><button class="btn danger" data-x="del">${icon('trash', 'sm')} Remove from this phone</button></div>`, (el, close) => {
-        el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; S.save(); close(); go('/groups'); };
-        el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Remove ${g.name} from this phone?`, 'The group stays for everyone else. You can rejoin with the link.', 'Remove', () => { g.deleted = true; S.save(); if (g.live?.key) Sync.sync(g.id, { push: false }); go('/groups'); }); };
+        el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; g.updatedAt = Date.now(); S.save(); close(); go('/groups'); };
+        el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Remove ${g.name} from this phone?`, 'The group stays for everyone else. You can rejoin with the link.', 'Remove', () => { g.deleted = true; g.updatedAt = Date.now(); S.save(); if (g.live?.key) Sync.sync(g.id, { push: false }); go('/groups'); }); };
       });
       return;
     }
@@ -1986,8 +1995,8 @@ const ACT = {
         S.save(); close(); render(); toast('Trip settings saved');
       };
       el.querySelector('[data-x=rotate]')?.addEventListener('click', (e) => busy(e.currentTarget, async () => { await Sync.rotate(g.id); close(); toast('New link ready. Share it again with your group.'); render(); }));
-      el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; S.save(); close(); go('/groups'); };
-      el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Delete ${g.name}?`, 'The group and its expenses disappear from your lists. You can undo right after.', 'Delete', () => { g.deleted = true; S.save(); go('/groups'); toast('Group deleted', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); }); };
+      el.querySelector('[data-x=arch]').onclick = () => { g.archived = !g.archived; g.updatedAt = Date.now(); S.save(); close(); go('/groups'); };
+      el.querySelector('[data-x=del]').onclick = () => { close(); confirmSheet(`Delete ${g.name}?`, 'The group and its expenses disappear from your lists. You can undo right after.', 'Delete', () => { g.deleted = true; g.updatedAt = Date.now(); S.save(); go('/groups'); toast('Group deleted', { action: 'Undo', onAction: () => { g.deleted = false; g.updatedAt = Date.now(); S.save(); render(); } }); }); };
     });
   },
   print: () => print(),
@@ -2039,7 +2048,7 @@ const ACT = {
   delComment: (b) => { S.deleteComment(b.dataset.id); render(); },
   seenGroup: (b) => { st().groups[b.dataset.g].seenAt = Date.now(); S.save(); render(); },
   resetFlags: () => { delete st().settings.flags; S.save(); render(); },
-  delSample: (b) => { const g = st().groups[b.dataset.g]; g.deleted = true; S.save(); go('/'); toast('Sample removed', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); },
+  delSample: (b) => { const g = st().groups[b.dataset.g]; g.deleted = true; g.updatedAt = Date.now(); S.save(); go('/'); toast('Sample removed', { action: 'Undo', onAction: () => { g.deleted = false; S.save(); render(); } }); },
   loadSample: () => go('/g/' + seedSample()),
   install: async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); },
   export: () => {
@@ -2051,6 +2060,13 @@ const ACT = {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   },
+  backupNow: async (b) => {
+    b.disabled = true;
+    const r = await Acc.push();
+    toast(r.ok ? 'Backed up' : r.signedOut ? 'Signed out. Sign in again to back up.' : r.error || 'Could not back up. Try again.');
+    render();
+  },
+  signOut: () => confirmSheet('Sign out?', 'Your groups stay on this phone. The copy in your Google account is kept until you sign in again and remove it.', 'Sign out', () => { Acc.signOut(); toast('Signed out'); render(); }),
   wipe: () => confirmSheet('Erase everything?', 'All groups, people and expenses on this phone will be deleted. Export a backup first if unsure.', 'Erase', async () => { await Promise.race([Push.disable().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]); localStorage.removeItem('hisaab:v1'); indexedDB.deleteDatabase('hisaab'); location.hash = '#/welcome'; location.reload(); }),
 };
 
@@ -2074,6 +2090,8 @@ initTelemetry(() => flag('telemetry'));
 track('open');
 loadFlagDefaults().then(() => { render(); if (st().me) runRepeats(); });
 // Keep the weekly nudge line current: at most once a day, when the app is opened.
+S.onChange((kind) => { if (kind !== 'external') Acc.schedulePush(); });
+if (Acc.signedIn()) Acc.pull().then((r) => { if (r.ok) { render(); Acc.push(); } }).catch(() => {});
 setTimeout(() => { if (Push.status() === 'on' && Date.now() - (st().settings.pushAt || 0) > 864e5) Push.register(nudgeText()).catch(() => {}); }, 3000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && st().me) runRepeats(); });
 // Ask the browser not to evict local data under storage pressure (local-first means this is the only copy).

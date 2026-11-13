@@ -5,6 +5,7 @@ import { cleanGroup, mergeGroup } from '../js/merge.js';
 import { diffEntry } from '../js/history.js';
 import { admit, guard, applyRoleOps, adminPids, pendingClaims } from '../js/access.js';
 import { sendPush, allowedEndpoint, pushLines } from '../js/webpush.js';
+import { verifyGoogleToken, makeSession, readSession } from '../js/auth.js';
 
 const ORIGINS = [/^https:\/\/([\w-]+\.)?(hisaab-s4u|gethisaab)\.pages\.dev$/, /^https:\/\/nmtjn1997\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1):\d+$/];
 const MAX_BODY = 2_000_000;
@@ -16,7 +17,7 @@ const cors = (origin) => ({
   'Access-Control-Max-Age': '86400',
   Vary: 'Origin',
 });
-const BUILD = 'push-1';
+const BUILD = 'account-1';
 const json = (data, status, origin) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Hisaab-Build': BUILD, ...cors(origin) } });
 
 async function sha256(s) {
@@ -24,10 +25,28 @@ async function sha256(s) {
   return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-const CHUNK = 96 * 1024, MAX_PHOTO = 1_500_000, MAX_PHOTOS = 300;
+const CHUNK = 96 * 1024, MAX_PHOTO = 1_500_000, MAX_PHOTOS = 300, MAX_BACKUP = 4_000_000;
 export class GroupDO extends DurableObject {
   writes = [];
   // Bill photos live with their group, in chunks (storage values are size-limited), behind the group key.
+  // Account backups use their own object (named "acct:<account id>"), never a group's.
+  async getBackup() {
+    const meta = await this.ctx.storage.get('bm');
+    if (!meta) return { rev: 0, at: null, data: null };
+    const parts = await this.ctx.storage.get(Array.from({ length: meta.n }, (_, i) => `bc:${i}`));
+    return { rev: meta.rev, at: meta.at, data: JSON.parse(Array.from({ length: meta.n }, (_, i) => parts.get(`bc:${i}`)).join('')) };
+  }
+  /** Compare-and-swap: only accepted if the phone merged on top of the latest copy. */
+  async putBackup(rev, text) {
+    const meta = (await this.ctx.storage.get('bm')) || { rev: 0, n: 0 };
+    if (rev !== meta.rev) return { status: 409, body: { error: 'stale', rev: meta.rev } };
+    const n = Math.ceil(text.length / CHUNK) || 1;
+    const puts = { bm: { rev: meta.rev + 1, n, at: Date.now() } };
+    for (let i = 0; i < n; i++) puts[`bc:${i}`] = text.slice(i * CHUNK, (i + 1) * CHUNK);
+    await this.ctx.storage.put(puts);
+    if (meta.n > n) await this.ctx.storage.delete(Array.from({ length: meta.n - n }, (_, i) => `bc:${n + i}`));
+    return { status: 200, body: { rev: meta.rev + 1, at: puts.bm.at } };
+  }
   async putPhoto(keyHash, rid, bytes, type) {
     const cur = await this.ctx.storage.get('g');
     if (!cur || cur.keyHash !== keyHash) return { status: 403, body: { error: 'wrong key' } };
@@ -204,6 +223,46 @@ async function logs(env, kind, limit) {
   return (await env.DB.prepare(sql).bind(n).all()).results;
 }
 
+// ---- Optional Google sign-in and account backup ----
+let jwks = null;
+async function googleKeys() {
+  if (jwks && jwks.until > Date.now()) return jwks.keys;
+  const r = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+  const maxAge = +(/max-age=(\d+)/.exec(r.headers.get('Cache-Control') || '')?.[1] || 3600);
+  jwks = { keys: (await r.json()).keys, until: Date.now() + Math.min(maxAge, 6 * 3600) * 1000 };
+  return jwks.keys;
+}
+const accountId = async (sub) => (await sha256('U:' + sub)).slice(0, 32);
+
+async function googleSignIn(req, env, origin) {
+  if (await limited(req, env)) return json({ error: 'slow down' }, 429, origin);
+  const b = await readJSON(req, 8000);
+  if (!b?.credential || !env.SESSION_SECRET) return json({ error: 'bad request' }, 400, origin);
+  let who;
+  try { who = await verifyGoogleToken(b.credential, env.GOOGLE_CLIENT_ID, await googleKeys()); }
+  catch (e) { return json({ error: 'sign-in failed' }, 401, origin); }
+  const u = await accountId(who.sub);
+  const meta = await env.GROUPS.get(env.GROUPS.idFromName('acct:' + u)).getBackup().then((r) => ({ rev: r.rev, at: r.at }));
+  return json({ session: await makeSession(u, env.SESSION_SECRET), email: who.email, name: who.name, ...meta }, 200, origin);
+}
+
+async function backup(req, env, origin) {
+  if (await limited(req, env)) return json({ error: 'slow down' }, 429, origin);
+  const u = await readSession((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, ''), env.SESSION_SECRET || '');
+  if (!u) return json({ error: 'signed out' }, 401, origin);
+  const stub = env.GROUPS.get(env.GROUPS.idFromName('acct:' + u));
+  if (req.method === 'GET') return json(await stub.getBackup(), 200, origin);
+  if (req.method !== 'PUT') return json({ error: 'method' }, 405, origin);
+  if ((+req.headers.get('Content-Length') || 0) > MAX_BACKUP) return json({ error: 'too large' }, 413, origin);
+  const text = await req.text();
+  if (text.length > MAX_BACKUP) return json({ error: 'too large' }, 413, origin);
+  let b;
+  try { b = JSON.parse(text); } catch { return json({ error: 'bad json' }, 400, origin); }
+  if (!b || !Number.isInteger(b.rev) || !b.data || typeof b.data !== 'object' || b.data.v !== 1) return json({ error: 'bad backup' }, 400, origin);
+  const r = await stub.putBackup(b.rev, JSON.stringify(b.data));
+  return json(r.body, r.status, origin);
+}
+
 // ---- Web Push ----
 const SUBJECT = 'https://gethisaab.pages.dev';
 const subId = async (endpoint) => (await sha256('P:' + endpoint)).slice(0, 32);
@@ -263,6 +322,8 @@ export default {
     if (path === '/version') return json({ build: BUILD }, 200, origin);
     if (path === '/t' && req.method === 'POST') return track(req, env, origin);
     if (path === '/e' && req.method === 'POST') return report(req, env, origin);
+    if (path === '/auth/google' && req.method === 'POST') return googleSignIn(req, env, origin);
+    if (path === '/me/backup') return backup(req, env, origin);
     if (path === '/push/sub' && req.method === 'POST') return pushSub(req, env, origin);
     if (path === '/push/inbox' && req.method === 'POST') return pushInbox(req, env, origin);
     if (path.startsWith('/admin/')) {

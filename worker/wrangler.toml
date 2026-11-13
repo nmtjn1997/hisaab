@@ -29,6 +29,7 @@ database_id = "1b8216c9-e00f-4d07-861e-120d696da114"
 crons = ["17 3 * * *", "7 * * * *"]
 
 [vars]
+GOOGLE_CLIENT_ID = "406542648201-28sa9k04p7gbkqt71hupko90rerb39ad.apps.googleusercontent.com"
 VAPID_PUBLIC = "BApGC4Ibi_H9NN7xaSBstpqQhCHkImWFWDEm2vo7KUc2hEJmyzybxsLDbmxCnADqTPwsuxnlKEmhcYE1xHoTMws"
 
 [observability]
