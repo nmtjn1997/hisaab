@@ -3,9 +3,9 @@
 // Google's script is loaded only when you tap sign in, so a signed-out phone talks to nobody.
 import * as S from './store.js';
 import { mergeState, backupPayload } from './backup.js';
+import { CLIENT_ID } from './google-id.js';
 
 const API = 'https://hisaab-sync.backinstock.workers.dev';
-export const CLIENT_ID = '406542648201-28sa9k04p7gbkqt71hupko90rerb39ad.apps.googleusercontent.com';
 
 export const account = () => S.state.settings.account || null;
 export const signedIn = () => !!account()?.session;

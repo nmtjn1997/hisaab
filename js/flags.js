@@ -11,6 +11,7 @@ export const FLAGS = {
   hints: ['Example phrases', 'Tappable examples under the quick add bar'],
   sampleData: ['Sample trip', 'Offer a sample group to explore'],
   splitwiseImport: ['Splitwise import', 'Import a Splitwise CSV export'],
+  sheetsExport: ['Google Sheets export', 'Send a group straight to a new sheet in your Google Drive'],
   haptics: ['Vibration', 'Small vibration on taps'],
   telemetry: ['Share anonymous usage stats', 'Screens opened, features used and crash reports. Never names, amounts or bills'],
 };

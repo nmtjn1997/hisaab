@@ -668,3 +668,27 @@ t('account backup: merging two phones keeps everything, newer edit wins, setting
   assert.equal(f.me, 'me1');
   assert.equal(f.people.new, undefined);
 });
+
+import { spreadsheetBody } from '../js/sheets.js';
+import { groupRows } from '../js/share.js';
+t('sheets export: money stays numeric and formatted, header bold, settle-up block appended', () => {
+  const members = [{ id: 'a', name: 'Asha' }, { id: 'b', name: 'Bilal' }];
+  const expenses = [{ date: Date.UTC(2026, 0, 5), desc: 'Dinner, "the good one"', category: 'food', amount: 120000, paid: { a: 120000 }, owed: { a: 60000, b: 60000 } }];
+  const rows = groupRows({ expenses, members, cur: 'INR' });
+  assert.deepEqual(rows[1], ['2026-01-05', 'Dinner, "the good one"', 'food', 1200, 'INR', 600, -600]);
+  // The CSV file keeps its old shape: quoted text, two decimals.
+  const csv = groupToCSV({ expenses, members, cur: 'INR' }).split('\n')[1];
+  assert.equal(csv, '2026-01-05,"Dinner, ""the good one""",food,1200.00,INR,600.00,-600.00');
+  const body = spreadsheetBody({ title: 'Goa (Hisaab)', rows, transfers: [{ from: 'Bilal', to: 'Asha', amount: 60000 }], cur: 'INR' });
+  const grid = body.sheets[0].data[0].rowData;
+  assert.equal(body.properties.title, 'Goa (Hisaab)');
+  assert.equal(body.sheets[0].properties.gridProperties.frozenRowCount, 1);
+  assert.equal(grid[0].values[0].userEnteredFormat.textFormat.bold, true);
+  assert.equal(grid[1].values[3].userEnteredValue.numberValue, 1200);   // a real number, so it totals
+  assert.match(grid[1].values[3].userEnteredFormat.numberFormat.pattern, /INR/);
+  assert.equal(grid[1].values[1].userEnteredValue.stringValue, 'Dinner, "the good one"');
+  const last = grid.at(-1).values;
+  assert.deepEqual([last[0].userEnteredValue.stringValue, last[2].userEnteredValue.stringValue, last[3].userEnteredValue.numberValue], ['Bilal', 'Asha', 600]);
+  // No settle-up rows when everyone is square.
+  assert.equal(spreadsheetBody({ title: 'T', rows, cur: 'INR' }).sheets[0].data[0].rowData.length, rows.length);
+});

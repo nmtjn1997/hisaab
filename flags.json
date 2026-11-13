@@ -9,6 +9,7 @@
   "hints": true,
   "sampleData": true,
   "splitwiseImport": true,
+  "sheetsExport": true,
   "haptics": true,
   "telemetry": true
 }

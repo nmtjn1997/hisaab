@@ -92,7 +92,11 @@ const csvCell = (v) => {
   if (/^[=+\-@]/.test(s) && isNaN(+s)) s = "'" + s;
   return /[",\n\r]/.test(s) || s.startsWith("'") ? `"${s.replace(/"/g, '""')}"` : s;
 };
-export function groupToCSV({ expenses, members, name, cur = 'INR', category = (c) => c }) {
+export function groupToCSV(opts) {
+  return groupRows(opts).map((r) => r.map((c) => (typeof c === 'number' ? c.toFixed(2) : csvCell(c))).join(',')).join('\n') + '\n';
+}
+
+export function groupRows({ expenses, members, cur = 'INR', category = (c) => c }) {
   const ids = members.map((m) => m.id);
   const head = ['Date', 'Description', 'Category', 'Cost', 'Currency', ...members.map((m) => m.name)];
   const rows = [head];
@@ -101,8 +105,8 @@ export function groupToCSV({ expenses, members, name, cur = 'INR', category = (c
   for (const e of [...expenses].sort((a, b) => a.date - b.date)) {
     const nets = ids.map((id) => (e.paid[id] || 0) - (e.owed[id] || 0));
     nets.forEach((n, i) => (total[ids[i]] += n));
-    rows.push([iso(e.date), e.desc, e.kind === 'settle' ? 'Payment' : category(e.category), (e.amount / 100).toFixed(2), cur, ...nets.map((n) => (n / 100).toFixed(2))]);
+    rows.push([iso(e.date), e.desc, e.kind === 'settle' ? 'Payment' : category(e.category), e.amount / 100, cur, ...nets.map((n) => n / 100)]);
   }
-  rows.push([iso(Date.now()), 'Total balance', '', '', cur, ...ids.map((id) => (total[id] / 100).toFixed(2))]);
-  return rows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n';
+  rows.push([iso(Date.now()), 'Total balance', '', '', cur, ...ids.map((id) => total[id] / 100)]);
+  return rows;
 }

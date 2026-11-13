@@ -11,7 +11,7 @@ import { describe as describeHist, revertPatch, FLAG_TEXT } from './history.js';
 import { initTelemetry, track, reportError } from './telemetry.js';
 import { dueRepeats, nextDate } from './repeat.js';
 import { FLAGS, loadFlagDefaults, flagDefault } from './flags.js';
-import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows, groupToCSV } from './share.js';
+import { waLink, upiLink, packGroup, unpackGroup, groupSummaryText, splitwiseRows, groupToCSV, groupRows } from './share.js';
 
 // ---------- tiny helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -1771,6 +1771,30 @@ async function exportCSV(gid) {
   toast('Spreadsheet saved');
 }
 
+/** Group to a new Google Sheet in the person's own Drive. No Hisaab account needed. */
+async function exportSheet(gid) {
+  const g = st().groups[gid];
+  const cur = ISO[gcur(gid)] || gcur(gid).trim();
+  try {
+    const { loadGis, authorize, createSheet, spreadsheetBody } = await import('./sheets.js');
+    await loadGis();
+    const tok = await authorize();          // the Google permission window
+    toast('Making your sheet');
+    const exps = S.groupExpenses(gid);
+    const ids = [...new Set([...memberList(gid), ...exps.flatMap((e) => [...Object.keys(e.paid), ...Object.keys(e.owed)])])];
+    const rows = groupRows({ expenses: exps, members: ids.map((id) => ({ id, name: S.pname(id, false) })), cur, category: (c) => CAT_NAMES[c] || c });
+    const transfers = transfersFor(gid).map((t) => ({ ...t, from: S.pname(t.from, false), to: S.pname(t.to, false) }));
+    const url = await createSheet(spreadsheetBody({ title: `${g.name} (Hisaab)`, rows, transfers, cur }), tok);
+    track('share_sheets');
+    const w = open(url, '_blank', 'noopener');
+    if (!w) toast('Sheet created', { action: 'Open', onAction: () => open(url, '_blank', 'noopener'), ms: 15000 });
+  } catch (e) {
+    if (/cancelled|popup_closed|access_denied/i.test(e.message)) return;
+    if (/popup_failed/i.test(e.message)) return toast('Your browser blocked the Google window. Allow pop-ups for Hisaab, then try again.');
+    toast(e.message === 'permission' ? 'Google did not allow that. Try again.' : 'Could not make the sheet. The CSV export always works.');
+  }
+}
+
 // Balance card PNG: native share sheet with the image where supported, otherwise a download.
 async function shareCard(gid) {
   const { balanceCard } = await import('./card.js');
@@ -1920,7 +1944,8 @@ const ACT = {
         ${flag('liveGroups') ? '' : '</template>'}${flag('whatsapp') ? '' : '<template>'}<button class="row" data-s="wa">${icon('whatsapp')}<div class="main"><div class="t">WhatsApp summary</div><div class="s">Who pays whom, as a message</div></div></button>
         ${flag('whatsapp') ? '' : '</template>'}<button class="row" data-s="link">${icon('link')}<div class="main"><div class="t">Share a copy of this group</div><div class="s">Others open the link and get every expense</div></div></button>
         <button class="row" data-s="img">${icon('share')}<div class="main"><div class="t">Balance card image</div><div class="s">A picture of who pays whom, best for WhatsApp</div></div></button>
-        <button class="row" data-s="csv">${icon('download')}<div class="main"><div class="t">Spreadsheet (CSV)</div><div class="s">Opens in Excel or Google Sheets, imports into Splitwise</div></div></button>
+        ${flag('sheetsExport') ? '' : '<template>'}<button class="row" data-s="gs">${icon('file')}<div class="main"><div class="t">Google Sheets</div><div class="s">Makes a new sheet in your Google Drive, live formulas and all</div></div></button>
+        ${flag('sheetsExport') ? '' : '</template>'}<button class="row" data-s="csv">${icon('download')}<div class="main"><div class="t">Spreadsheet (CSV)</div><div class="s">Opens in Excel or Google Sheets, imports into Splitwise</div></div></button>
         <button class="row" data-s="pdf">${icon('file')}<div class="main"><div class="t">PDF report</div><div class="s">Balances, per person totals, all expenses</div></div></button>
       </div>`, (el, close) => {
       (el.querySelector('[data-s=live]') || {}).onclick = (e) => busy(e.currentTarget, async () => {
@@ -1944,6 +1969,8 @@ const ACT = {
         if (navigator.share) { try { await navigator.share({ title: st().groups[gid].name, text: `${st().groups[gid].name} on Hisaab`, url }); return; } catch (x) { if (x.name === 'AbortError') return; } }
         try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { prompt('Copy this link', url); }
       });
+      const gs = el.querySelector('[data-s=gs]');
+      if (gs) gs.onclick = (e) => { const b = e.currentTarget; b.disabled = true; exportSheet(gid).finally(() => { b.disabled = false; close(); }); };
       el.querySelector('[data-s=csv]').onclick = (e) => busy(e.currentTarget, async () => { await exportCSV(gid); close(); });
       el.querySelector('[data-s=pdf]').onclick = () => { track('share_pdf'); close(); go(`/g/${gid}/report`); };
     });
